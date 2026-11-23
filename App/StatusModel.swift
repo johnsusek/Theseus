@@ -62,8 +62,8 @@ struct ChangeRow: Equatable, Identifiable {
   var id: String { path }
 }
 
-/// Every agent of the session, running ones first. An agent still marked active after its process exited reads as stopped.
-func agentRows(_ transcript: Transcript, processIsRunning: Bool, locale: Locale = .current) -> [AgentRow] {
+/// Every agent of the session, running ones first.
+func agentRows(_ transcript: Transcript, locale: Locale = .current) -> [AgentRow] {
   let rows = transcript.tasks.filter { $0.kind == .agent }.map { task in
     var state = AgentRow.State.stopped
     var doing = "Stopped"
@@ -73,7 +73,7 @@ func agentRows(_ transcript: Transcript, processIsRunning: Bool, locale: Locale 
       [word, oneLine(report ?? "", limit: 120)].filter { !$0.isEmpty }.joined(separator: ": ")
     }
 
-    if task.status.isActive, processIsRunning {
+    if task.status.isActive {
       let running = transcript.toolCalls.last { $0.parentToolUseId == task.id && $0.status == .running }
       state = .running
       doing = running.map { toolActivity($0.name, input: $0.input) } ?? "Thinking"
@@ -160,9 +160,7 @@ func modeName(_ mode: PermissionMode) -> String {
 
 /// "18.2k tokens", or the bare count under a thousand.
 func tokenCount(_ tokens: Int, locale: Locale) -> String {
-  if tokens < 1000 { return "\(tokens) tokens" }
-
-  return (Double(tokens) / 1000).formatted(.number.precision(.fractionLength(1)).locale(locale)) + "k tokens"
+  shortCount(tokens, locale: locale) + " tokens"
 }
 
 /// "999", "54.8k", "200k", "1M": a count to at most one decimal.

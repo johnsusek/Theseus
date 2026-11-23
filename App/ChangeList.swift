@@ -15,13 +15,7 @@ final class ChangeListController: ListController, NSMenuItemValidation {
 
   override func loadView() {
     super.loadView()
-    let menu = NSMenu()
-
-    for (title, action) in [("Open", #selector(openFromMenu(_:))), ("Reveal in Finder", #selector(revealInFinder(_:))), ("Copy Path", #selector(copyPath(_:)))] {
-      menu.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
-    }
-
-    tableView.menu = menu
+    setMenu([("Open", #selector(openFromMenu(_:))), ("Reveal in Finder", #selector(revealInFinder(_:))), ("Copy Path", #selector(copyPath(_:)))])
     tableView.target = self
     tableView.doubleAction = #selector(openSelection(_:))
     tableView.onReturn = { [unowned self] in openSelection(nil) }
@@ -44,51 +38,51 @@ final class ChangeListController: ListController, NSMenuItemValidation {
 
   func tableView(_ tableView: NSTableView, typeSelectStringFor tableColumn: NSTableColumn?, row: Int) -> String? { rows[row].name }
 
-  private func urls(_ indexes: IndexSet) -> [URL] {
-    indexes.map { URL(filePath: rows[$0].path) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+  /// A row's id is its file's path. Files the session has since deleted are left out.
+  private func existing(_ paths: [String]) -> [URL] {
+    paths.filter { FileManager.default.fileExists(atPath: $0) }.map { URL(filePath: $0) }
   }
 
-  private func open(_ indexes: IndexSet) {
-    let files = urls(indexes)
+  private func open(_ paths: [String]) {
+    let files = existing(paths)
 
-    // A file the session has since deleted has nothing to open.
-    if files.count < indexes.count { NSSound.beep() }
+    if files.count < paths.count { NSSound.beep() }
 
     for file in files { NSWorkspace.shared.open(file) }
   }
 
   /// Double-click and Return.
   @objc private func openSelection(_ sender: Any?) {
-    open(tableView.selectedRowIndexes)
+    open(selectedIds)
   }
 
   @objc private func openFromMenu(_ sender: Any?) {
-    open(tableView.menuRows)
+    open(menuIds)
   }
 
   @objc private func revealInFinder(_ sender: Any?) {
-    NSWorkspace.shared.activateFileViewerSelecting(urls(tableView.menuRows))
+    NSWorkspace.shared.activateFileViewerSelecting(existing(menuIds))
   }
 
   @objc private func copyPath(_ sender: Any?) {
-    write(tableView.menuRows)
+    write(menuIds)
   }
 
   /// Edit > Copy with the list in front copies the selected files' paths.
   @objc func copy(_ sender: Any?) {
-    write(tableView.selectedRowIndexes)
+    write(selectedIds)
   }
 
-  private func write(_ indexes: IndexSet) {
+  private func write(_ paths: [String]) {
     NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(indexes.map { rows[$0].path }.joined(separator: "\n"), forType: .string)
+    NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
   }
 
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     switch menuItem.action {
-    case #selector(copy(_:)): !tableView.selectedRowIndexes.isEmpty
-    case #selector(copyPath(_:)): !tableView.menuRows.isEmpty
-    default: !urls(tableView.menuRows).isEmpty
+    case #selector(copy(_:)): !selectedIds.isEmpty
+    case #selector(copyPath(_:)): !menuIds.isEmpty
+    default: !existing(menuIds).isEmpty
     }
   }
 }

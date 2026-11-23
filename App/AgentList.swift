@@ -20,28 +20,31 @@ final class AgentListController: ListController, NSMenuItemValidation {
     super.init(rowHeight: 42, visibleRows: 6, label: "Agents")
   }
 
+  private var isShown = false
+
+  /// The agents the context menu is for that can be stopped.
+  private var stoppable: [AgentRow] { rows.filter { menuIds.contains($0.id) && $0.state == .running && $0.taskId != nil } }
+
   override func loadView() {
     super.loadView()
-    let menu = NSMenu()
-
-    menu.addItem(withTitle: "Stop", action: #selector(stopAgents(_:)), keyEquivalent: "").target = self
-    tableView.menu = menu
+    setMenu([("Stop", #selector(stopAgents(_:)))])
   }
 
-  override func viewWillAppear() {
-    super.viewWillAppear()
+  override func viewDidAppear() {
+    super.viewDidAppear()
+    isShown = true
     updateTicker()
   }
 
   override func viewDidDisappear() {
     super.viewDidDisappear()
-    ticker?.cancel()
-    ticker = nil
+    isShown = false
+    updateTicker()
   }
 
   /// A running agent's elapsed time counts up once a second while the list is on screen.
   private func updateTicker() {
-    let isNeeded = isViewLoaded && view.window != nil && rows.contains { $0.state == .running }
+    let isNeeded = isShown && rows.contains { $0.state == .running }
 
     if isNeeded, ticker == nil {
       ticker = everySecond(self) { list in
@@ -65,12 +68,10 @@ final class AgentListController: ListController, NSMenuItemValidation {
   func tableView(_ tableView: NSTableView, typeSelectStringFor tableColumn: NSTableColumn?, row: Int) -> String? { rows[row].title }
 
   @objc private func stopAgents(_ sender: Any?) {
-    onStop(tableView.menuRows.map { rows[$0] })
+    onStop(stoppable)
   }
 
-  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-    tableView.menuRows.contains { rows[$0].state == .running && rows[$0].taskId != nil }
-  }
+  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { !stoppable.isEmpty }
 }
 
 /// One agent: a spinner or a mark, its description over its type and what it is doing, and its time over its tokens.

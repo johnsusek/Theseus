@@ -86,8 +86,8 @@ struct StatusModelTests {
       ["type": "system", "subtype": "task_progress", "task_id": "a-reading", "tool_use_id": "reading", "description": "Reading RemoteTerminalView.swift", "usage": ["total_tokens": 18_230, "tool_uses": 1, "duration_ms": 900]],
       agentCall("thinking", "Diff viewer theme handling", at: "10:01:05")
     ]
-    let transcript = try transcript(frames)
-    let rows = agentRows(transcript, processIsRunning: true, locale: english)
+    var transcript = try transcript(frames)
+    let rows = agentRows(transcript, locale: english)
 
     #expect(rows.map(\.id) == ["reading", "thinking", "done", "broken"])
     #expect(rows.map(\.state) == [.running, .running, .done, .failed])
@@ -100,8 +100,9 @@ struct StatusModelTests {
     #expect(rows[2].duration == .seconds(48))
 
     // The process is gone, so nothing is still running.
-    #expect(agentRows(transcript, processIsRunning: false).map(\.state) == [.done, .failed, .stopped, .stopped])
-    #expect(agentRows(transcript, processIsRunning: false).last?.detail == "Explore \u{B7} Stopped")
+    transcript.stopActiveTasks()
+    #expect(agentRows(transcript).map(\.state) == [.done, .failed, .stopped, .stopped])
+    #expect(agentRows(transcript).last?.detail == "Explore \u{B7} Stopped")
   }
 
   @Test func changeRowsNameTheFolderBelowTheProject() throws {

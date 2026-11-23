@@ -1,16 +1,8 @@
 import AppKit
 
-/// A table whose Return key opens the selection, and which says what rows its context menu is for.
+/// A table whose Return key opens the selection.
 final class ListTableView: NSTableView {
   var onReturn: () -> Void = {}
-
-  /// The rows a context menu command acts on: the clicked row alone when it is outside the selection, the whole
-  /// selection when it is inside, and nothing for a click below the last row.
-  var menuRows: IndexSet {
-    if clickedRow < 0 { return [] }
-
-    return selectedRowIndexes.contains(clickedRow) ? selectedRowIndexes : [clickedRow]
-  }
 
   override func keyDown(with event: NSEvent) {
     // Return and Enter.
@@ -22,11 +14,16 @@ final class ListTableView: NSTableView {
 
 /// A popover's content: one column of rows, tall enough for `visibleRows` of them before it scrolls.
 /// Subclasses hold the rows and make the row views.
-class ListController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+class ListController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
   static let width = 420.0
   let tableView = ListTableView()
   /// The rows' ids, in the order shown.
   private(set) var ids: [String] = []
+  /// The rows the open context menu is for: the clicked row alone when it is outside the selection, the whole selection
+  /// when it is inside, and none for a click below the last row. They are ids because the rows can reorder under an open menu.
+  private(set) var menuIds: [String] = []
+
+  var selectedIds: [String] { tableView.selectedRowIndexes.filter { $0 < ids.count }.map { ids[$0] } }
   private let visibleRows: Int
 
   init(rowHeight: CGFloat, visibleRows: Int, label: String) {
@@ -64,7 +61,7 @@ class ListController: NSViewController, NSTableViewDataSource, NSTableViewDelega
 
   /// Shows `newIds`' rows, keeping the selection on the rows it was on.
   func reload(_ newIds: [String]) {
-    let selected = Set(tableView.selectedRowIndexes.compactMap { $0 < ids.count ? ids[$0] : nil })
+    let selected = Set(selectedIds)
 
     ids = newIds
     tableView.reloadData()
@@ -82,6 +79,24 @@ class ListController: NSViewController, NSTableViewDataSource, NSTableViewDelega
   override func viewDidAppear() {
     super.viewDidAppear()
     view.window?.makeFirstResponder(tableView)
+  }
+
+  /// Gives the table its context menu, whose commands then act on `menuIds`.
+  func setMenu(_ items: [(title: String, action: Selector)]) {
+    let menu = NSMenu()
+
+    for item in items { menu.addItem(withTitle: item.title, action: item.action, keyEquivalent: "").target = self }
+
+    menu.delegate = self
+    tableView.menu = menu
+  }
+
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    let clicked = tableView.clickedRow
+
+    menuIds = []
+
+    if clicked >= 0, clicked < ids.count { menuIds = tableView.selectedRowIndexes.contains(clicked) ? selectedIds : [ids[clicked]] }
   }
 
   func numberOfRows(in tableView: NSTableView) -> Int { ids.count }

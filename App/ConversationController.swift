@@ -23,8 +23,8 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private var busySince: Date?
   private var agentsPopover: NSPopover?
   private var changesPopover: NSPopover?
-  /// The click that closed a popover. The same click on the popover's own chip must not open it again.
-  private var closingClick: Int?
+  /// The click that closed a popover, and that popover's chip. The same click on that chip must not open it again.
+  private var closingClick: (chip: NSView, event: Int)?
   /// How many of the session's issues are already in the log.
   private var loggedIssues = 0
 
@@ -152,9 +152,11 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private func refresh() {
     guard let session, let live = session.live else { return }
 
+    let isWaiting = !live.pendingPermissions.isEmpty || live.state == .requiresAction
+
     retitle()
 
-    if !live.pendingPermissions.isEmpty || live.state == .requiresAction {
+    if isWaiting {
       tabStatus.status = .needsInput
     } else if live.state == .running {
       tabStatus.status = .running
@@ -169,11 +171,11 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     let pending = live.pendingPermissions.map { PendingRequest(requestId: $0.requestId, toolUseId: $0.toolUseId) }
     let input = TranscriptInput(header: "Started in \(place)", transcript: session.transcript, streaming: live.streaming.blocks, tasks: live.taskList.tasks, pending: pending, isLive: live.isRunning)
     content.transcript.show(input, requests: live.pendingPermissions, projectName: project.lastPathComponent)
-    showStatus(session, live)
+    showStatus(session, live, isWaiting: isWaiting)
   }
 
   /// Fills the status row and whichever of its popovers is open.
-  private func showStatus(_ session: Session, _ live: LiveSession) {
+  private func showStatus(_ session: Session, _ live: LiveSession, isWaiting: Bool) {
     let transcript = session.transcript
     var status = StatusRowState()
 
@@ -181,7 +183,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
     loggedIssues = live.issues.count
     busySince = isBusy ? busySince ?? .now : nil
-    status.runningAgents = live.isRunning ? transcript.tasks.count { $0.kind == .agent && $0.status.isActive } : 0
+    status.runningAgents = transcript.tasks.count { $0.kind == .agent && $0.status.isActive }
     status.showsAgents = status.runningAgents > 0 || agentsPopover != nil
     status.changedFiles = transcript.changedFiles.count
     status.added = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.added }
@@ -189,7 +191,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
     if isBusy {
       let turn = transcript.turns.last.flatMap { $0.status == .running ? $0 : nil }
-      status.activity = activityLine(summary: live.activity, isWaiting: !live.pendingPermissions.isEmpty || live.state == .requiresAction, transcript: transcript)
+      status.activity = activityLine(summary: live.activity, isWaiting: isWaiting, transcript: transcript)
       status.busySince = turn?.startedAt ?? busySince
     }
 
@@ -200,7 +202,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     status.contextUsed = live.contextUsage?.totalTokens ?? 0
     status.contextMax = live.contextUsage?.maxTokens ?? 0
     content.status.state = status
-    agentList?.rows = agentRows(transcript, processIsRunning: live.isRunning)
+    agentList?.rows = agentRows(transcript)
     changeList?.rows = changeRows(transcript.changedFiles, base: session.workingDirectory)
   }
 
@@ -293,7 +295,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   // MARK: Agents and changes
 
   @objc func showAgents(_ sender: Any?) {
-    guard agentsPopover == nil, !isClosingClick else { return }
+    guard agentsPopover == nil, !isClosingClick(on: content.status.agents) else { return }
 
     let list = AgentListController()
     list.onStop = { [unowned self] rows in stop(rows) }
@@ -301,13 +303,18 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   }
 
   @objc func showChanges(_ sender: Any?) {
-    guard changesPopover == nil, !isClosingClick else { return }
+    guard changesPopover == nil, !isClosingClick(on: content.status.changes) else { return }
 
     present(ChangeListController(), under: content.status.changes, as: \.changesPopover)
   }
 
-  /// A click on a chip whose popover is open closes the popover, as any click outside it does, and its action follows.
-  private var isClosingClick: Bool { closingClick != nil && closingClick == NSApp.currentEvent.flatMap { $0.type == .leftMouseUp || $0.type == .leftMouseDown ? $0.eventNumber : nil } }
+  /// A click on a chip whose popover is open closes the popover, as any click outside it does, and the chip's action follows.
+  /// A mouse-down and its mouse-up share an event number.
+  private func isClosingClick(on chip: NSView) -> Bool {
+    guard let closingClick, closingClick.chip === chip, let event = NSApp.currentEvent, event.type == .leftMouseUp || event.type == .leftMouseDown else { return false }
+
+    return event.eventNumber == closingClick.event
+  }
 
   /// Shows `list` in a popover under `chip`.
   private func present(_ list: ListController, under chip: NSView, as slot: ReferenceWritableKeyPath<ConversationController, NSPopover?>) {
@@ -324,7 +331,9 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   }
 
   func popoverWillClose(_ notification: Notification) {
-    closingClick = NSApp.currentEvent.flatMap { $0.type == .leftMouseDown ? $0.eventNumber : nil }
+    let chip = notification.object as? NSPopover === agentsPopover ? content.status.agents : content.status.changes
+
+    closingClick = NSApp.currentEvent.flatMap { $0.type == .leftMouseDown ? (chip, $0.eventNumber) : nil }
   }
 
   func popoverDidClose(_ notification: Notification) {
@@ -425,7 +434,8 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     let live = session?.live
     let pick = menuItem.representedObject as? String
-    let canPick = live?.isRunning == true
+    // A resumed session has a live process before it has answered `initialize`.
+    let canPick = live?.isRunning == true && live?.initializeInfo != nil
 
     switch menuItem.action {
     case #selector(showAgents(_:)):
@@ -442,8 +452,9 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
       menuItem.state = pick == live?.permissionMode?.rawValue ? .on : .off
       return canPick
     case #selector(toggleFastMode(_:)):
+      // A model without fast mode can still turn off the flag an earlier model set.
       menuItem.state = live?.fastMode == true ? .on : .off
-      return canPick && live?.modelInfo?.supportsFastMode == true
+      return canPick && (live?.fastMode == true || live?.modelInfo?.supportsFastMode == true)
     case #selector(stopSession(_:)):
       return isBusy
     case #selector(allowRequest(_:)), #selector(denyRequest(_:)):
