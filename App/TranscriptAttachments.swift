@@ -84,7 +84,7 @@ final class StatusMarkView: NSImageView, ActiveAppearing {
     contentTintColor = isActive ? tint : .secondaryLabelColor
     toolTip = label
 
-    if isRunning { addSymbolEffect(.variableColor.iterative, options: .repeating) }
+    if isRunning, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { addSymbolEffect(.variableColor.iterative, options: .repeating) }
   }
 
   @available(*, unavailable)
