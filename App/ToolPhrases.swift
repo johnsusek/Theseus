@@ -123,3 +123,12 @@ func toolSummary(_ calls: [(name: String, target: String)]) -> String {
   let sentence = parts.joined(separator: ", ")
   return sentence.prefix(1).uppercased() + sentence.dropFirst()
 }
+
+/// A tool's input as indented JSON with its keys in a stable order. Empty for an input with no fields.
+func readableJSON(_ input: JSONValue) -> String {
+  guard case .object(let fields) = input, !fields.isEmpty else { return "" }
+
+  let encoder = JSONEncoder()
+  encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+  return (try? encoder.encode(input)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+}

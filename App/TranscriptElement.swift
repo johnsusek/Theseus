@@ -125,6 +125,8 @@ struct TranscriptBuilder {
 
   private struct TurnKey: Equatable {
     var range: Range<Int>
+    /// Tells a turn from one with the same number in another conversation shown by the same builder.
+    var lastItemId: String?
     var status: Turn.Status
     var isRunning: Bool
     var tasks: [TaskItem]
@@ -183,7 +185,7 @@ struct TranscriptBuilder {
 
     for (index, turn) in turns.enumerated() {
       let isRunning = index == turns.count - 1 && input.isLive && turn.status == .running
-      let key = TurnKey(range: turn.messageRange, status: turn.status, isRunning: isRunning, tasks: isRunning ? input.tasks : [], pending: input.pending)
+      let key = TurnKey(range: turn.messageRange, lastItemId: turn.items.last?.id, status: turn.status, isRunning: isRunning, tasks: isRunning ? input.tasks : [], pending: input.pending)
       var built: BuiltTurn
 
       if isRunning, !input.streaming.isEmpty {
@@ -436,8 +438,9 @@ struct TranscriptBuilder {
 
     if name == "Bash", let command = input["command"]?.string {
       blocks.append(.command("$ " + command))
-    } else if toolPhrase(for: name).past.hasPrefix("Used "), case .object(let fields) = input, !fields.isEmpty, let json = try? JSONEncoder.readable.encode(input) {
-      blocks.append(.output(String(decoding: json, as: UTF8.self)))
+    } else if toolPhrase(for: name).past.hasPrefix("Used "), !readableJSON(input).isEmpty {
+      // A tool without a phrase of its own says nothing about its input in the row, so the detail shows it.
+      blocks.append(.output(readableJSON(input)))
     }
 
     if let task = context.agents[id] {
@@ -526,13 +529,4 @@ struct TranscriptBuilder {
 
     return (Double(tokens) / 1000).formatted(.number.precision(.fractionLength(1)).locale(locale)) + "k tokens"
   }
-}
-
-extension JSONEncoder {
-  /// Indented, with keys in a stable order.
-  fileprivate static let readable = {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-    return encoder
-  }()
 }

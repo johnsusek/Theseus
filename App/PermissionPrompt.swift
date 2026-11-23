@@ -40,24 +40,16 @@ struct PermissionPrompt: Equatable {
     case "Write":
       title = fileExists ? "Replace \(file)?" : "Create \(file)?"
       symbol = "doc.badge.plus"
-      body = .code(input["content"]?.string ?? "")
+      body = .code((input["content"]?.string ?? "").trimmingCharacters(in: .newlines))
     case "Bash":
       title = "Run this command?"
       symbol = "terminal"
-      body = .code(input["command"]?.string ?? "")
+      body = .code((input["command"]?.string ?? "").trimmingCharacters(in: .newlines))
     default:
       title = "Allow \(displayName ?? toolDisplayName(toolName))?"
       symbol = "hand.raised"
-      body = .text(description ?? Self.readable(input))
+      body = .text(description ?? readableJSON(input))
     }
-  }
-
-  private static func readable(_ input: JSONValue) -> String {
-    guard case .object(let fields) = input, !fields.isEmpty else { return "" }
-
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-    return (try? encoder.encode(input)).map { String(decoding: $0, as: UTF8.self) } ?? ""
   }
 }
 

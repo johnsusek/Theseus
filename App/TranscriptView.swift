@@ -92,10 +92,10 @@ final class TranscriptView: NSView {
     windowActiveChanged()
   }
 
-  /// The text sits in a centered column at most 720 pt wide, at least 20 pt from the edges.
+  /// The text sits in a centered column at most 720 pt wide, at least 20 pt from the edges of what a legacy scroller leaves.
   override func layout() {
     super.layout()
-    let inset = NSSize(width: max(20, floor((bounds.width - 720) / 2)), height: 20)
+    let inset = NSSize(width: max(20, floor((scrollView.contentSize.width - 720) / 2)), height: 20)
 
     if textView.textContainerInset != inset { textView.textContainerInset = inset }
 
