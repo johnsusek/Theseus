@@ -1,0 +1,57 @@
+name: Theseus
+options:
+  bundleIdPrefix: net.johnsolo
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: WX2UGCD2SK
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    ENABLE_HARDENED_RUNTIME: YES
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+packages:
+  ClaudeEngine:
+    path: ../ClaudeEngine
+schemes:
+  Theseus:
+    build:
+      targets:
+        Theseus: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+targets:
+  Theseus:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+        excludes:
+          - "*.plist"
+    dependencies:
+      - package: ClaudeEngine
+        product: ClaudeEngine
+      - package: ClaudeEngine
+        product: ClaudeWorkspace
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSHumanReadableCopyright: © 2026 John Susek
+        NSPrincipalClass: NSApplication
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Folder
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.folder
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.johnsolo.Theseus
