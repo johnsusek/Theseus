@@ -43,7 +43,14 @@ final class DecoratedFragment: NSTextLayoutFragment {
     return CGRect(x: -frame.minX, y: 0, width: textLayoutManager?.textContainer?.size.width ?? frame.maxX, height: frame.height)
   }
 
-  override var renderingSurfaceBounds: CGRect { super.renderingSurfaceBounds.union(column) }
+  /// A fill's bottom padding sits in the paragraph's spacing after, which the text's last paragraph does not get, so the surface reaches past the frame.
+  override var renderingSurfaceBounds: CGRect {
+    var bounds = super.renderingSurfaceBounds.union(column)
+
+    if let fill = decoration.fill, decoration.roundsBottom, let last = textLineFragments.last { bounds = bounds.union(CGRect(x: column.minX, y: 0, width: column.width, height: last.typographicBounds.maxY + fill.padding)) }
+
+    return bounds
+  }
 
   override func draw(at point: CGPoint, in context: CGContext) {
     context.saveGState()
