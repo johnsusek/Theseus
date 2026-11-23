@@ -35,7 +35,6 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     super.init(window: panel)
 
     panel.titlebarAppearsTransparent = true
-    panel.contentMinSize = NSSize(width: 500, height: 220)
     panel.isFloatingPanel = false
     panel.hidesOnDeactivate = false
     panel.becomesKeyOnlyIfNeeded = false
@@ -142,7 +141,8 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     permissions.update(live, on: window)
   }
 
-  /// Sends the draft, waiting for the process if it is still starting. The CLI queues a prompt sent mid-turn.
+  /// Sends the draft, waiting for the process if it is still starting and resuming the session if its process has exited.
+  /// The CLI queues a prompt sent mid-turn.
   private func send() {
     let text = content.prompt.draft.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return }
@@ -156,9 +156,9 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
       do {
         // A failed start has already put up its own alert.
-        guard let live = try? await starting?.value.live else { return restore(text) }
+        guard let session = try? await starting?.value else { return restore(text) }
 
-        try await live.send(text)
+        try await app.workspace.open(session).send(text)
         hasSent = true
       } catch {
         restore(text)
