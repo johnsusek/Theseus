@@ -30,12 +30,6 @@ final class PromptTextView: NSTextView {
     return finder?.validateMenuItem(menuItem) ?? false
   }
 
-  /// The text view adds its insertion indicator when it takes focus; without effects it skips the dictation glyph beside the caret.
-  override func didAddSubview(_ subview: NSView) {
-    super.didAddSubview(subview)
-    (subview as? NSTextInsertionIndicator)?.automaticModeOptions = []
-  }
-
   override func didChangeText() {
     super.didChangeText()
     needsDisplay = true

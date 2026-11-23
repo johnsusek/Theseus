@@ -41,6 +41,7 @@ final class PromptField: NSView, NSTextViewDelegate {
     textView.font = Self.font
     textView.isRichText = false
     textView.allowsUndo = true
+    textView.writingToolsBehavior = .none
     textView.drawsBackground = false
     textView.textContainerInset = NSSize(width: 0, height: (Self.oneLineHeight - Self.lineHeight) / 2)
     textView.isContinuousSpellCheckingEnabled = true
