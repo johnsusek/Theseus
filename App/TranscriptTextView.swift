@@ -22,6 +22,13 @@ final class TranscriptTextView: NSTextView {
     if hypot(end.x - start.x, end.y - start.y) < 3 { onToggle(toggle) }
   }
 
+  /// Cards are views inside the text, which the text's accessibility element leaves out, so their controls join its children.
+  override func accessibilityChildren() -> [Any]? {
+    func cards(in view: NSView) -> [NSView] { view.subviews.flatMap { $0 is any CardContent ? [$0] : cards(in: $0) } }
+
+    return (super.accessibilityChildren() ?? []) + NSAccessibility.unignoredChildren(from: cards(in: self))
+  }
+
   override func menu(for event: NSEvent) -> NSMenu? {
     let point = convert(event.locationInWindow, from: nil)
 
