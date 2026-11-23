@@ -14,6 +14,8 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   /// The last send, so prompts reach the CLI in the order they were typed.
   private var sending: Task<Void, Never>?
   private var hasSent = false
+  /// Prompts sent and not yet echoed back by the CLI.
+  private var sent: [SentPrompt] = []
   private var isClosed = false
   /// Counts the sessions this tab has started, so only the newest one's observation keeps running.
   private var generation = 0
@@ -164,12 +166,17 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
       tabStatus.status = .idle
     }
 
+    if !sent.isEmpty {
+      let echoed = Set(session.transcript.messages.compactMap(\.uuid))
+      sent.removeAll { echoed.contains($0.uuid) }
+    }
+
     content.prompt.isBusy = isBusy
-    content.prompt.textView.placeholder = session.transcript.turns.isEmpty ? "Describe a task or ask a question" : "Reply"
+    content.prompt.textView.placeholder = session.transcript.turns.isEmpty && sent.isEmpty ? "Describe a task or ask a question" : "Reply"
 
     let place = [session.worktree ?? project.lastPathComponent, session.gitBranch].compactMap { $0 }.joined(separator: " \u{B7} ")
     let pending = live.pendingPermissions.map { PendingRequest(requestId: $0.requestId, toolUseId: $0.toolUseId) }
-    let input = TranscriptInput(header: "Started in \(place)", transcript: session.transcript, streaming: live.streaming.blocks, tasks: live.taskList.tasks, pending: pending, isLive: live.isRunning)
+    let input = TranscriptInput(header: "Started in \(place)", transcript: session.transcript, streaming: live.streaming.blocks, tasks: live.taskList.tasks, pending: pending, isLive: live.isRunning, sent: sent)
     content.transcript.show(input, requests: live.pendingPermissions, projectName: project.lastPathComponent)
     showStatus(session, live, isWaiting: isWaiting)
   }
@@ -212,7 +219,10 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     let text = content.prompt.draft.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return }
 
+    let prompt = SentPrompt(uuid: UUID().uuidString.lowercased(), text: text)
     content.prompt.draft = ""
+    sent.append(prompt)
+    refresh()
 
     // A process that exited before its first prompt left nothing to resume, so it starts over like a failed start.
     if startFailed || (!hasSent && session?.live?.isRunning == false) { start() }
@@ -222,21 +232,23 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
       do {
         // A failed start has already put up its own alert.
-        guard let session = try? await starting?.value else { return restore(text) }
+        guard let session = try? await starting?.value else { return restore(prompt) }
 
-        try await app.workspace.open(session) { $0.enableTaskTools = true }.send(text)
+        try await app.workspace.open(session) { $0.enableTaskTools = true }.send(text, uuid: prompt.uuid)
         hasSent = true
       } catch {
-        restore(text)
+        restore(prompt)
         report(error, as: "The Prompt Could Not Be Sent")
       }
     }
   }
 
   /// Puts a prompt that was not sent back in the field, after anything typed since.
-  private func restore(_ text: String) {
+  private func restore(_ prompt: SentPrompt) {
     let draft = content.prompt.draft
-    content.prompt.draft = draft.isEmpty ? text : draft + "\n" + text
+    sent.removeAll { $0 == prompt }
+    content.prompt.draft = draft.isEmpty ? prompt.text : draft + "\n" + prompt.text
+    refresh()
   }
 
   private func discard(_ session: Session) {

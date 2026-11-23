@@ -93,6 +93,12 @@ struct PendingRequest: Equatable {
   var toolUseId: String?
 }
 
+/// A prompt the app sent that the CLI has not echoed back yet. The echo carries the same uuid.
+struct SentPrompt: Equatable {
+  var uuid: String
+  var text: String
+}
+
 struct TranscriptInput {
   var header = ""
   var transcript = Transcript()
@@ -101,6 +107,8 @@ struct TranscriptInput {
   var pending: [PendingRequest] = []
   /// A process is attached, so the last turn can still be running.
   var isLive = false
+  /// Shown after everything else until their echo arrives, so a prompt appears when it is sent, also one queued behind a running turn.
+  var sent: [SentPrompt] = []
 }
 
 /// Turns a transcript into elements. Finished turns are kept between calls, so a streaming reply rebuilds only the last turn.
@@ -217,6 +225,8 @@ struct TranscriptBuilder {
     if !streamed, input.isLive, !input.streaming.isEmpty {
       elements += blocks(entries(turnId: "tail", items: [], streaming: input.streaming, context: context), tasks: [], context: context).elements
     }
+
+    for prompt in input.sent { elements.append(TranscriptElement(id: "sent/\(prompt.uuid)", kind: .prompt(prompt.text), spacing: 22)) }
 
     // A subagent's request has no row on the main thread, so its card goes last.
     for request in input.pending where !placed.contains(request.requestId) {

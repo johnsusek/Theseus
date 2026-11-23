@@ -29,6 +29,15 @@ struct TranscriptBuilderTests {
     ])
   }
 
+  @Test func sentPromptsShowAfterTheRunningTurn() throws {
+    var builder = makeBuilder()
+    let running = try transcript([prompt("First"), said("Working.")])
+    let elements = builder.elements(for: TranscriptInput(transcript: running, isLive: true, sent: [SentPrompt(uuid: "q", text: "Queued")]))
+
+    #expect(elements.map(\.shape) == ["header", "prompt(First)", "reply(Working.)", "prompt(Queued)"])
+    #expect(elements.last?.id == "sent/q")
+  }
+
   @Test func footerGivesTheStartAndTheDuration() throws {
     var builder = makeBuilder()
     let elements = builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go", at: "14:14:00"), said("Done."), finished()])))
