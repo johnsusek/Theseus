@@ -13,7 +13,7 @@ xcodegen generate --quiet
 mkdir -p "$derived"
 # A failed build can leave a partial bundle behind, so gate on xcodebuild's status rather than the bundle existing.
 if ! xcodebuild -project Theseus.xcodeproj -scheme Theseus -configuration Debug -destination 'platform=macOS' -derivedDataPath "$derived" -allowProvisioningUpdates build >"$derived/build.log" 2>&1; then
-  grep -E " error:" "$derived/build.log" >&2
+  grep -E " error:" "$derived/build.log" >&2 || true
   echo "build failed, see $derived/build.log" >&2
   exit 1
 fi

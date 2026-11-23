@@ -112,7 +112,8 @@ final class TranscriptView: NSView {
     for case .text(let text) in streaming.blocks { add(text, Self.reply) }
 
     let freshTail = fresh.attributedSubstring(from: NSRange(location: committed, length: fresh.length - committed)).string
-    guard committed > 0 || freshTail != tail, let content = textView.textContentStorage, let storage = content.textStorage else { return }
+    guard committed > 0 || freshTail != tail else { return }
+    guard let content = textView.textContentStorage, let storage = content.textStorage else { return assertionFailure("The transcript fell back to TextKit 1") }
 
     content.performEditingTransaction {
       storage.replaceCharacters(in: NSRange(location: committedLength, length: storage.length - committedLength), with: fresh)

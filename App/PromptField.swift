@@ -131,7 +131,7 @@ final class PromptField: NSView, NSTextViewDelegate {
   }
 
   @objc private func fitHeight() {
-    guard let layout = textView.textLayoutManager else { return }
+    guard let layout = textView.textLayoutManager else { return assertionFailure("The prompt fell back to TextKit 1") }
 
     layout.ensureLayout(for: layout.documentRange)
     let inset = textView.textContainerInset.height * 2

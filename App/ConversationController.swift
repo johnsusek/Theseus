@@ -15,6 +15,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   /// The last send, so prompts reach the CLI in the order they were typed.
   private var sending: Task<Void, Never>?
   private var hasSent = false
+  private var isClosed = false
   private weak var watchedGroup: NSWindowTabGroup?
   private var groupWatch: NSKeyValueObservation?
 
@@ -106,6 +107,9 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
   /// Starts the `claude` process. A failed start is reported once, and the next send tries again.
   private func start() {
+    if let session { discard(session) }
+
+    session = nil
     let starting = Task { [workspace = app.workspace, project] in try await workspace.start(in: project) }
     self.starting = starting
     startFailed = false
@@ -149,7 +153,8 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
     content.prompt.draft = ""
 
-    if startFailed { start() }
+    // A process that exited before its first prompt left nothing to resume, so it starts over like a failed start.
+    if startFailed || (!hasSent && session?.live?.isRunning == false) { start() }
 
     sending = Task { [previous = sending, starting] in
       await previous?.value
@@ -167,17 +172,31 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     }
   }
 
+  /// Puts a prompt that was not sent back in the field, after anything typed since.
   private func restore(_ text: String) {
-    if content.prompt.draft.isEmpty { content.prompt.draft = text }
+    let draft = content.prompt.draft
+    content.prompt.draft = draft.isEmpty ? text : draft + "\n" + text
+  }
+
+  private func discard(_ session: Session) {
+    Task {
+      do {
+        try await app.workspace.close(session)
+      } catch {
+        log.error("Could not discard a blank session: \(error.localizedDescription)")
+      }
+    }
   }
 
   private func report(_ error: any Error, as title: String) {
-    guard let window else { return }
+    guard let window, !isClosed else { return log.error("\(title): \(error.localizedDescription)") }
 
     let alert = NSAlert()
     alert.alertStyle = .warning
     alert.messageText = title
     alert.informativeText = error.localizedDescription
+    // A sheet needs its window on screen, so a background tab comes forward.
+    window.makeKeyAndOrderFront(nil)
     alert.beginSheetModal(for: window)
   }
 
@@ -228,17 +247,14 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
   /// A conversation that has run a turn keeps running without its tab. One that never sent a prompt is discarded.
   func windowWillClose(_ notification: Notification) {
+    isClosed = true
     app.closed(self)
 
     Task {
       await sending?.value
       guard !hasSent, let session = try? await starting?.value else { return }
 
-      do {
-        try await app.workspace.close(session)
-      } catch {
-        log.error("Could not discard a blank session: \(error.localizedDescription)")
-      }
+      discard(session)
     }
   }
 }

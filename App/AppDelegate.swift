@@ -39,7 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
     let windows = conversations.compactMap(\.window)
 
-    if windows.contains(where: \.isVisible) || projectPanel != nil { return false }
+    // A hidden app's windows are not visible either; unhiding brings them back.
+    if sender.isHidden || projectPanel != nil || windows.contains(where: \.isVisible) { return false }
 
     if let minimized = windows.first(where: \.isMiniaturized) {
       minimized.deminiaturize(nil)
