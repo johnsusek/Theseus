@@ -1,16 +1,38 @@
 import AppKit
 
+/// The Session menu's submenus, whose items come from the conversation in front.
+enum SessionMenu: Int {
+  case model = 1, effort, mode
+}
+
+/// Fills the Session menu's Model, Effort and Permission Mode submenus when the menu opens, and disables the ones with nothing to offer.
+final class SessionMenuDelegate: NSObject, NSMenuDelegate {
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    // With a popover open the key window is the popover's, and the conversation is the main window.
+    let conversation = (NSApp.keyWindow?.windowController ?? NSApp.mainWindow?.windowController) as? ConversationController
+
+    for item in menu.items {
+      guard let submenu = item.submenu, let kind = SessionMenu(rawValue: item.tag) else { continue }
+
+      submenu.items = conversation?.menuItems(kind) ?? []
+      item.isEnabled = submenu.numberOfItems > 0
+    }
+  }
+}
+
 /// The menu bar. Every action goes to the responder chain, so commands follow the key window and disable when nothing takes them.
 @MainActor
-func makeMainMenu(recentProjects: any NSMenuDelegate) -> NSMenu {
+func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDelegate) -> NSMenu {
   let name = "Theseus"
   let services = NSMenu(title: "Services")
   let recent = NSMenu(title: "Open Recent")
+  let session = NSMenu(title: "Session")
   let window = NSMenu(title: "Window")
   let help = NSMenu(title: "Help")
   let main = NSMenu()
 
   recent.delegate = recentProjects
+  session.delegate = sessionMenus
 
   main.items = [
     menu(name, [
@@ -79,6 +101,8 @@ func makeMainMenu(recentProjects: any NSMenuDelegate) -> NSMenu {
       ])
     ]),
     menu("View", [
+      item("Show Agents", #selector(ConversationController.showAgents(_:)), "a", [.command, .control]),
+      item("Show Changes", #selector(ConversationController.showChanges(_:)), "c", [.command, .control]),
       item("Show Verbose Transcript", #selector(ConversationController.toggleVerboseTranscript(_:))),
       .separator(),
       item("Show Tab Bar", #selector(NSWindow.toggleTabBar(_:))),
@@ -86,14 +110,21 @@ func makeMainMenu(recentProjects: any NSMenuDelegate) -> NSMenu {
       .separator(),
       item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])
     ]),
-    menu("Session", [
-      item("Allow", #selector(ConversationController.allowRequest(_:)), "\r"),
-      item("Deny", #selector(ConversationController.denyRequest(_:)), "d"),
-      .separator(),
-      item("Stop", #selector(ConversationController.stopSession(_:)), ".")
-    ]),
+    submenu(session),
     submenu(window),
     submenu(help)
+  ]
+
+  session.items = [
+    item("Allow", #selector(ConversationController.allowRequest(_:)), "\r"),
+    item("Deny", #selector(ConversationController.denyRequest(_:)), "d"),
+    .separator(),
+    item("Stop", #selector(ConversationController.stopSession(_:)), "."),
+    .separator(),
+    sessionSubmenu("Model", .model),
+    sessionSubmenu("Effort", .effort),
+    item("Fast Mode", #selector(ConversationController.toggleFastMode(_:))),
+    sessionSubmenu("Permission Mode", .mode)
   ]
 
   window.items = [
@@ -128,6 +159,13 @@ private func find(_ title: String, _ action: NSTextFinder.Action, _ key: String,
 private func submenu(_ menu: NSMenu) -> NSMenuItem {
   let item = NSMenuItem(title: menu.title, action: nil, keyEquivalent: "")
   item.submenu = menu
+  return item
+}
+
+@MainActor
+private func sessionSubmenu(_ title: String, _ kind: SessionMenu) -> NSMenuItem {
+  let item = submenu(NSMenu(title: title))
+  item.tag = kind.rawValue
   return item
 }
 

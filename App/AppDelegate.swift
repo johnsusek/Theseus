@@ -3,12 +3,18 @@ import ClaudeWorkspace
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-  let workspace = Workspace(recordsDirectory: URL.applicationSupportDirectory.appending(path: "Theseus"))
+  let workspace: Workspace
   private var conversations: [ConversationController] = []
+  private let sessionMenus = SessionMenuDelegate()
   private var projectPanel: NSOpenPanel?
 
+  /// A headless check passes a workspace that runs a stand-in CLI and keeps its records elsewhere.
+  init(workspace: Workspace = Workspace(recordsDirectory: URL.applicationSupportDirectory.appending(path: "Theseus"))) {
+    self.workspace = workspace
+  }
+
   func applicationWillFinishLaunching(_ notification: Notification) {
-    NSApp.mainMenu = makeMainMenu(recentProjects: self)
+    NSApp.mainMenu = makeMainMenu(recentProjects: self, sessionMenus: sessionMenus)
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {

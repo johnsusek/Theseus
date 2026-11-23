@@ -3,7 +3,7 @@ import ClaudeEngine
 import ClaudeWorkspace
 
 /// One conversation, in a panel that is a tab of its project's window.
-final class ConversationController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
+final class ConversationController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSPopoverDelegate {
   private let project: URL
   private unowned let app: AppDelegate
   private let content = ConversationView()
@@ -19,9 +19,19 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private var generation = 0
   private weak var watchedGroup: NSWindowTabGroup?
   private var groupWatch: NSKeyValueObservation?
+  /// When the session last went from idle to busy, which the activity timer counts from until the turn has a date.
+  private var busySince: Date?
+  private var agentsPopover: NSPopover?
+  private var changesPopover: NSPopover?
+  /// The click that closed a popover. The same click on the popover's own chip must not open it again.
+  private var closingClick: Int?
+  /// How many of the session's issues are already in the log.
+  private var loggedIssues = 0
 
   private var frameName: String { "Project \(project.path)" }
   private var isBusy: Bool { session?.live.map { $0.state != .idle } ?? false }
+  private var agentList: AgentListController? { agentsPopover?.contentViewController as? AgentListController }
+  private var changeList: ChangeListController? { changesPopover?.contentViewController as? ChangeListController }
 
   /// The session's title, else its first prompt, cut to one line.
   private var conversationTitle: String {
@@ -56,6 +66,11 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.prompt.onSend = { [unowned self] in send() }
     content.prompt.onStop = { [unowned self] in stopSession(nil) }
     content.transcript.onDecision = { [unowned self] request, decision in session?.live?.respond(to: request, with: decision) }
+    content.status.agents.target = self
+    content.status.agents.action = #selector(showAgents(_:))
+    content.status.changes.target = self
+    content.status.changes.action = #selector(showChanges(_:))
+    content.status.menuItems = { [unowned self] button in button === content.status.model ? menuItems(.model, labeled: true) + menuItems(.effort, labeled: true) + [.separator(), fastModeItem()] : menuItems(.mode) }
     start()
   }
 
@@ -112,8 +127,9 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     if let session { discard(session) }
 
     session = nil
+    loggedIssues = 0
     generation += 1
-    let starting = Task { [workspace = app.workspace, project] in try await workspace.start(in: project) { $0.enableTaskTools = true } }
+    let starting = Task { [workspace = app.workspace, project] in try await workspace.start(in: project, settings: .lastChosen) { $0.enableTaskTools = true } }
     self.starting = starting
     startFailed = false
 
@@ -153,6 +169,39 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     let pending = live.pendingPermissions.map { PendingRequest(requestId: $0.requestId, toolUseId: $0.toolUseId) }
     let input = TranscriptInput(header: "Started in \(place)", transcript: session.transcript, streaming: live.streaming.blocks, tasks: live.taskList.tasks, pending: pending, isLive: live.isRunning)
     content.transcript.show(input, requests: live.pendingPermissions, projectName: project.lastPathComponent)
+    showStatus(session, live)
+  }
+
+  /// Fills the status row and whichever of its popovers is open.
+  private func showStatus(_ session: Session, _ live: LiveSession) {
+    let transcript = session.transcript
+    var status = StatusRowState()
+
+    for issue in live.issues.dropFirst(loggedIssues) { log.error("\(issue)") }
+
+    loggedIssues = live.issues.count
+    busySince = isBusy ? busySince ?? .now : nil
+    status.runningAgents = live.isRunning ? transcript.tasks.count { $0.kind == .agent && $0.status.isActive } : 0
+    status.showsAgents = status.runningAgents > 0 || agentsPopover != nil
+    status.changedFiles = transcript.changedFiles.count
+    status.added = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.added }
+    status.removed = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.removed }
+
+    if isBusy {
+      let turn = transcript.turns.last.flatMap { $0.status == .running ? $0 : nil }
+      status.activity = activityLine(summary: live.activity, isWaiting: !live.pendingPermissions.isEmpty || live.state == .requiresAction, transcript: transcript)
+      status.busySince = turn?.startedAt ?? busySince
+    }
+
+    status.hasSession = true
+    status.model = modelName(live.modelInfo, id: live.model, among: live.initializeInfo?.models ?? [])
+    status.effort = live.effort.map(effortName) ?? ""
+    status.mode = live.permissionMode.map(modeName) ?? "Unknown Mode"
+    status.contextUsed = live.contextUsage?.totalTokens ?? 0
+    status.contextMax = live.contextUsage?.maxTokens ?? 0
+    content.status.state = status
+    agentList?.rows = agentRows(transcript, processIsRunning: live.isRunning)
+    changeList?.rows = changeRows(transcript.changedFiles, base: session.workingDirectory)
   }
 
   /// Sends the draft, waiting for the process if it is still starting and resuming the session if its process has exited.
@@ -241,8 +290,165 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.transcript.isVerbose.toggle()
   }
 
+  // MARK: Agents and changes
+
+  @objc func showAgents(_ sender: Any?) {
+    guard agentsPopover == nil, !isClosingClick else { return }
+
+    let list = AgentListController()
+    list.onStop = { [unowned self] rows in stop(rows) }
+    present(list, under: content.status.agents, as: \.agentsPopover)
+  }
+
+  @objc func showChanges(_ sender: Any?) {
+    guard changesPopover == nil, !isClosingClick else { return }
+
+    present(ChangeListController(), under: content.status.changes, as: \.changesPopover)
+  }
+
+  /// A click on a chip whose popover is open closes the popover, as any click outside it does, and its action follows.
+  private var isClosingClick: Bool { closingClick != nil && closingClick == NSApp.currentEvent.flatMap { $0.type == .leftMouseUp || $0.type == .leftMouseDown ? $0.eventNumber : nil } }
+
+  /// Shows `list` in a popover under `chip`.
+  private func present(_ list: ListController, under chip: NSView, as slot: ReferenceWritableKeyPath<ConversationController, NSPopover?>) {
+    let popover = NSPopover()
+
+    popover.behavior = .transient
+    popover.contentViewController = list
+    popover.delegate = self
+    self[keyPath: slot] = popover
+    // Fills the list, and puts the agents badge on screen when no agent is running.
+    refresh()
+    content.layoutSubtreeIfNeeded()
+    popover.show(relativeTo: chip.bounds, of: chip, preferredEdge: .minY)
+  }
+
+  func popoverWillClose(_ notification: Notification) {
+    closingClick = NSApp.currentEvent.flatMap { $0.type == .leftMouseDown ? $0.eventNumber : nil }
+  }
+
+  func popoverDidClose(_ notification: Notification) {
+    if notification.object as? NSPopover === agentsPopover { agentsPopover = nil } else { changesPopover = nil }
+
+    // The badge leaves with its popover when no agent is running.
+    refresh()
+  }
+
+  private func stop(_ rows: [AgentRow]) {
+    guard let live = session?.live else { return }
+
+    Task {
+      do {
+        for taskId in rows.filter({ $0.state == .running }).compactMap(\.taskId) { try await live.engine.stopTask(taskId) }
+      } catch {
+        report(error, as: "The Agent Could Not Be Stopped")
+      }
+    }
+  }
+
+  // MARK: Model, effort and permission mode
+
+  /// The items of a session menu, for the status row's menus and the menu bar's. `validateMenuItem` checks the current one.
+  func menuItems(_ kind: SessionMenu, labeled: Bool = false) -> [NSMenuItem] {
+    guard let live = session?.live else { return [] }
+
+    var items: [NSMenuItem] = []
+
+    switch kind {
+    case .model:
+      items = (live.initializeInfo?.models ?? []).map { model in
+        let item = NSMenuItem(title: model.displayName, action: #selector(pickModel(_:)), keyEquivalent: "")
+        item.representedObject = model.value
+        item.toolTip = model.description
+        return item
+      }
+    case .effort:
+      items = (live.modelInfo?.supportedEffortLevels ?? []).map { level in
+        let item = NSMenuItem(title: effortName(level), action: #selector(pickEffort(_:)), keyEquivalent: "")
+        item.representedObject = level
+        return item
+      }
+    case .mode:
+      // The CLI refuses to enter bypassPermissions in a session launched without it, so it is not offered.
+      let modes: [PermissionMode] = live.modelInfo?.supportsAutoMode == true ? [.default, .acceptEdits, .plan, .auto] : [.default, .acceptEdits, .plan]
+
+      items = modes.map { mode in
+        let item = NSMenuItem(title: modeName(mode), action: #selector(pickPermissionMode(_:)), keyEquivalent: "")
+        item.representedObject = mode.rawValue
+        return item
+      }
+    }
+
+    if labeled, !items.isEmpty { items.insert(.sectionHeader(title: kind == .model ? "Model" : "Effort"), at: 0) }
+
+    return items
+  }
+
+  private func fastModeItem() -> NSMenuItem {
+    NSMenuItem(title: "Fast Mode", action: #selector(toggleFastMode(_:)), keyEquivalent: "")
+  }
+
+  @objc func pickModel(_ sender: NSMenuItem) {
+    guard let value = sender.representedObject as? String else { return }
+
+    change("The Model Could Not Be Changed") { $0.model = value } with: { try await $0.setModel(value) }
+  }
+
+  @objc func pickEffort(_ sender: NSMenuItem) {
+    guard let level = sender.representedObject as? String else { return }
+
+    change("The Effort Could Not Be Changed") { $0.effort = level } with: { try await $0.setEffort(level) }
+  }
+
+  @objc func pickPermissionMode(_ sender: NSMenuItem) {
+    guard let mode = (sender.representedObject as? String).map(PermissionMode.init(rawValue:)) else { return }
+
+    change("The Permission Mode Could Not Be Changed") { $0.permissionMode = mode } with: { try await $0.setPermissionMode(mode) }
+  }
+
+  @objc func toggleFastMode(_ sender: Any?) {
+    guard let isOn = session?.live.map({ !$0.fastMode }) else { return }
+
+    change("Fast Mode Could Not Be Changed") { $0.fastMode = isOn } with: { try await $0.setFastMode(isOn) }
+  }
+
+  /// Sends a pick to the session. One that succeeds is what the next new conversation starts with;
+  /// one that fails is reported, and the row keeps showing what the session still has.
+  private func change(_ failure: String, remember: @escaping (inout SessionSettings) -> Void, with apply: @escaping (LiveSession) async throws -> Void) {
+    guard let live = session?.live else { return }
+
+    Task {
+      do {
+        try await apply(live)
+        remember(&SessionSettings.lastChosen)
+      } catch {
+        report(error, as: failure)
+      }
+    }
+  }
+
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    let live = session?.live
+    let pick = menuItem.representedObject as? String
+    let canPick = live?.isRunning == true
+
     switch menuItem.action {
+    case #selector(showAgents(_:)):
+      return session?.transcript.tasks.contains { $0.kind == .agent } ?? false
+    case #selector(showChanges(_:)):
+      return !(session?.transcript.changedFiles.isEmpty ?? true)
+    case #selector(pickModel(_:)):
+      menuItem.state = pick == live?.modelInfo?.value ? .on : .off
+      return canPick
+    case #selector(pickEffort(_:)):
+      menuItem.state = pick == live?.effort ? .on : .off
+      return canPick
+    case #selector(pickPermissionMode(_:)):
+      menuItem.state = pick == live?.permissionMode?.rawValue ? .on : .off
+      return canPick
+    case #selector(toggleFastMode(_:)):
+      menuItem.state = live?.fastMode == true ? .on : .off
+      return canPick && live?.modelInfo?.supportsFastMode == true
     case #selector(stopSession(_:)):
       return isBusy
     case #selector(allowRequest(_:)), #selector(denyRequest(_:)):
@@ -258,13 +464,17 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   // MARK: Window
 
   func windowDidBecomeMain(_ notification: Notification) {
-    content.prompt.updateButton()
-    content.transcript.windowActiveChanged()
+    windowActiveChanged()
   }
 
   func windowDidResignMain(_ notification: Notification) {
+    windowActiveChanged()
+  }
+
+  private func windowActiveChanged() {
     content.prompt.updateButton()
     content.transcript.windowActiveChanged()
+    content.status.windowActiveChanged()
   }
 
   func windowDidMove(_ notification: Notification) {
@@ -286,5 +496,13 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
       discard(session)
     }
+  }
+}
+
+extension SessionSettings {
+  /// What a new conversation starts with: the model, effort, permission mode and fast mode last picked in any conversation.
+  static var lastChosen: SessionSettings {
+    get { UserDefaults.standard.data(forKey: "LastSessionSettings").flatMap { try? JSONDecoder().decode(SessionSettings.self, from: $0) } ?? SessionSettings() }
+    set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "LastSessionSettings") }
   }
 }
