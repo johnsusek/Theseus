@@ -16,6 +16,8 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private var sending: Task<Void, Never>?
   private var hasSent = false
   private var isClosed = false
+  /// Counts the sessions this tab has started, so only the newest one's observation keeps running.
+  private var generation = 0
   private weak var watchedGroup: NSWindowTabGroup?
   private var groupWatch: NSKeyValueObservation?
 
@@ -110,14 +112,19 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     if let session { discard(session) }
 
     session = nil
+    generation += 1
     let starting = Task { [workspace = app.workspace, project] in try await workspace.start(in: project) }
     self.starting = starting
     startFailed = false
 
-    Task {
+    Task { [generation] in
       do {
         session = try await starting.value
-        keepCurrent(self) { $0.refresh() }
+
+        // A pass for an earlier start reads nothing observable, which ends its loop.
+        keepCurrent(self) { controller in
+          if controller.generation == generation { controller.refresh() }
+        }
       } catch {
         startFailed = true
         report(error, as: "Claude Could Not Start")
