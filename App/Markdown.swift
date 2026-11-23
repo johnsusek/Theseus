@@ -1,0 +1,308 @@
+import AppKit
+
+struct MarkdownStyle: Hashable {
+  var font = NSFont.systemFont(ofSize: 14)
+  var color = NSColor.labelColor
+  var lineSpacing = 5.0
+  /// Space kept clear on each side of every block.
+  var left = 0.0
+  var right = 0.0
+}
+
+/// Markdown as styled paragraphs: headings, lists, quotes, fenced code on a rounded background, tables as tab-stopped rows.
+@MainActor
+enum Markdown {
+  private struct Chunk: Hashable {
+    var text: String
+    var style: MarkdownStyle
+  }
+
+  private struct Table {
+    var identity: Int
+    var columns: [PresentationIntent.TableColumn]
+    var rows: [(identity: Int, isHeader: Bool, cells: [NSAttributedString])] = []
+    var left: CGFloat
+    var quoteBars: [CGFloat]
+  }
+
+  private static var cache: [Chunk: [Paragraph]] = [:]
+  private static let options = AttributedString.MarkdownParsingOptions(allowsExtendedAttributes: true, interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
+
+  /// Parses `source` in chunks that are kept, so a reply that grows as it streams only parses its last chunk again.
+  static func paragraphs(_ source: String, style: MarkdownStyle = MarkdownStyle()) -> [Paragraph] {
+    if cache.count > 4000 { cache = [:] }
+
+    var result: [Paragraph] = []
+
+    for text in chunks(of: source) {
+      let key = Chunk(text: text, style: style)
+      var parsed = cache[key] ?? parse(text, style: style)
+      cache[key] = parsed
+
+      // The first block sits flush with what is above it; a code block keeps only its own padding.
+      if result.isEmpty, !parsed.isEmpty {
+        let padding = parsed[0].decoration.fill.map(\.padding) ?? 0
+        parsed[0].restyle { $0.paragraphSpacingBefore = padding }
+      }
+
+      result += parsed
+    }
+
+    return result
+  }
+
+  /// Splits at blank lines that end a top-level block: outside a code fence, and before a line that is not indented.
+  static func chunks(of source: String) -> [String] {
+    var chunks: [String] = []
+    var current: [Substring] = []
+    var blanks: [Substring] = []
+    var fence: Substring?
+
+    for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
+      let trimmed = line.drop { $0 == " " }
+      let marker = trimmed.prefix { $0 == "`" || $0 == "~" }
+
+      if line.allSatisfy(\.isWhitespace), fence == nil {
+        blanks.append(line)
+        continue
+      }
+
+      if !blanks.isEmpty, !current.isEmpty, line.first?.isWhitespace == false {
+        chunks.append(current.joined(separator: "\n"))
+        current = []
+      } else {
+        current += current.isEmpty ? [] : blanks
+      }
+
+      blanks = []
+      current.append(line)
+
+      if let open = fence {
+        if marker.count >= open.count, marker.first == open.first, trimmed.dropFirst(marker.count).allSatisfy(\.isWhitespace) { fence = nil }
+      } else if marker.count >= 3, Set(marker).count == 1 {
+        fence = marker
+      }
+    }
+
+    if !current.isEmpty { chunks.append(current.joined(separator: "\n")) }
+
+    return chunks
+  }
+
+  private static let blockSpacing = 10.0
+
+  private static func parse(_ text: String, style: MarkdownStyle) -> [Paragraph] {
+    guard let parsed = try? AttributedString(markdown: text, options: options) else {
+      log.error("Markdown did not parse; showing it as plain text")
+      return [Paragraph(content: TranscriptStyle.text(text, font: style.font, color: style.color), base: [.paragraphStyle: TranscriptStyle.paragraph(before: blockSpacing, indent: style.left, tail: style.right, lineSpacing: style.lineSpacing)])]
+    }
+
+    var paragraphs: [Paragraph] = []
+    var blocks: [(intent: PresentationIntent?, runs: [AttributedString.Runs.Run])] = []
+    var seenItems: Set<Int> = []
+    var table: Table?
+    var wasListItem = false
+
+    for run in parsed.runs {
+      if let last = blocks.indices.last, blocks[last].intent == run.presentationIntent {
+        blocks[last].runs.append(run)
+      } else {
+        blocks.append((run.presentationIntent, [run]))
+      }
+    }
+
+    for block in blocks {
+      let components = Array((block.intent?.components ?? []).reversed())
+      var left = style.left
+      var quoteBars: [CGFloat] = []
+      var listStart: CGFloat?
+      var isOrdered = false
+      var marker: String?
+      var font = style.font
+      var before = blockSpacing
+      var cell: (table: Int, columns: [PresentationIntent.TableColumn], row: Int, isHeader: Bool)?
+      var code = false
+      var isRule = false
+
+      for component in components {
+        switch component.kind {
+        case .blockQuote:
+          quoteBars.append(left)
+          left += 14
+        case .orderedList, .unorderedList:
+          isOrdered = component.kind == .orderedList
+          listStart = left
+          left += 26
+        case .listItem(let ordinal):
+          // Only an item's first block carries its marker.
+          marker = seenItems.insert(component.identity).inserted ? (isOrdered ? "\(ordinal)." : "\u{2022}") : nil
+        case .header(let level):
+          font = NSFont.systemFont(ofSize: [1: 20.0, 2: 17, 3: 15][level] ?? style.font.pointSize, weight: level < 3 ? .bold : .semibold)
+          before = 18
+        case .codeBlock:
+          code = true
+        case .thematicBreak:
+          isRule = true
+        case .table(let columns):
+          cell = (component.identity, columns, 0, false)
+        case .tableHeaderRow:
+          cell?.row = component.identity
+          cell?.isHeader = true
+        case .tableRow:
+          cell?.row = component.identity
+        default:
+          break
+        }
+      }
+
+      if let cell {
+        if table?.identity != cell.table {
+          paragraphs += table.map(rows) ?? []
+          table = Table(identity: cell.table, columns: cell.columns, left: left, quoteBars: quoteBars)
+        }
+
+        var rows = table?.rows ?? []
+
+        if rows.last?.identity != cell.row { rows.append((cell.row, cell.isHeader, [])) }
+
+        rows[rows.count - 1].cells.append(inline(parsed, runs: block.runs, font: cell.isHeader ? NSFont.systemFont(ofSize: style.font.pointSize, weight: .semibold) : style.font, color: style.color))
+        table?.rows = rows
+        continue
+      }
+
+      paragraphs += table.map(rows) ?? []
+      table = nil
+
+      if marker != nil, wasListItem { before = 4 }
+
+      wasListItem = listStart != nil
+      var decoration = Decoration(quoteBars: quoteBars)
+
+      if code {
+        let source = block.runs.map { String(parsed[$0.range].characters) }.joined()
+        paragraphs += codeLines(source.hasSuffix("\n") ? String(source.dropLast()) : source, left: left, right: style.right, before: before, color: style.color, quoteBars: quoteBars)
+        continue
+      }
+
+      if isRule {
+        decoration.rule = .middle
+        decoration.left = left
+        decoration.right = style.right
+        paragraphs.append(Paragraph(content: TranscriptStyle.text(" ", font: style.font), base: [.paragraphStyle: TranscriptStyle.paragraph(before: before), .decoration: decoration]))
+        continue
+      }
+
+      let content = inline(parsed, runs: block.runs, font: font, color: quoteBars.isEmpty ? style.color : .secondaryLabelColor)
+
+      // Raw HTML blocks keep their line ending, which would leave an empty paragraph behind.
+      while content.string.hasSuffix("\n") { content.deleteCharacters(in: NSRange(location: content.length - 1, length: 1)) }
+
+      let paragraph = TranscriptStyle.paragraph(before: before, indent: left, tail: style.right, lineSpacing: style.lineSpacing)
+
+      if let marker, let listStart {
+        paragraph.firstLineHeadIndent = listStart
+        paragraph.tabStops = [NSTextTab(textAlignment: .right, location: listStart + 18), NSTextTab(textAlignment: .left, location: left)]
+        content.insert(TranscriptStyle.text("\t\(marker)\t", font: style.font, color: .secondaryLabelColor), at: 0)
+      }
+
+      var base: [NSAttributedString.Key: Any] = [.paragraphStyle: paragraph, .font: font, .foregroundColor: style.color]
+
+      if !quoteBars.isEmpty { base[.decoration] = decoration }
+
+      paragraphs.append(Paragraph(content: content, base: base))
+    }
+
+    return paragraphs + (table.map(rows) ?? [])
+  }
+
+  /// Monospaced lines on one rounded background, a paragraph per line.
+  static func codeLines(_ source: String, left: CGFloat, right: CGFloat, before: CGFloat, color: NSColor = .labelColor, quoteBars: [CGFloat] = []) -> [Paragraph] {
+    let lines = source.components(separatedBy: "\n")
+
+    return lines.enumerated().map { index, line in
+      let isFirst = index == 0
+      let isLast = index == lines.count - 1
+      let padding = Decoration.Fill.code.padding
+      let style = TranscriptStyle.paragraph(before: isFirst ? before + padding : 0, after: isLast ? padding : 0, indent: left + 12, tail: right + 12)
+      let decoration = Decoration(fill: .code, left: left, right: right, roundsTop: isFirst, roundsBottom: isLast, quoteBars: quoteBars)
+      return Paragraph(content: TranscriptStyle.text(line, font: TranscriptStyle.code, color: color), base: [.paragraphStyle: style, .decoration: decoration, .font: TranscriptStyle.code, .foregroundColor: color])
+    }
+  }
+
+  /// TextKit 2 has no table layout, so a row is one line with a tab stop per column, as wide as the column's widest cell.
+  private static func rows(_ table: Table) -> [Paragraph] {
+    let gap = 24.0
+    var widths = [CGFloat](repeating: 0, count: table.columns.count)
+
+    for row in table.rows {
+      for (column, cell) in row.cells.enumerated() where column < widths.count { widths[column] = max(widths[column], ceil(cell.size().width)) }
+    }
+
+    var starts: [CGFloat] = []
+    var next = table.left
+
+    for width in widths {
+      starts.append(next)
+      next += width + gap
+    }
+
+    // The first column starts the line. A tab there would skip to the second stop, so only a right or centered first column gets one.
+    let leadsWithTab = table.columns.first.map { $0.alignment == .right || $0.alignment == .center } ?? false
+    let stops = zip(table.columns, zip(starts, widths)).map { column, frame in
+      switch column.alignment {
+      case .right: NSTextTab(textAlignment: .right, location: frame.0 + frame.1)
+      case .center: NSTextTab(textAlignment: .center, location: frame.0 + frame.1 / 2)
+      default: NSTextTab(textAlignment: .left, location: frame.0)
+      }
+    }
+
+    return table.rows.enumerated().map { index, row in
+      let content = NSMutableAttributedString()
+      let style = TranscriptStyle.paragraph(before: index == 0 ? blockSpacing : 4, after: row.isHeader ? 4 : 0, indent: table.left)
+      var decoration = Decoration(left: table.left, quoteBars: table.quoteBars)
+
+      style.tabStops = Array(stops.dropFirst(leadsWithTab ? 0 : 1))
+
+      for (column, cell) in row.cells.enumerated() {
+        if column > 0 || leadsWithTab { content.append(NSAttributedString(string: "\t")) }
+
+        content.append(cell)
+      }
+
+      if row.isHeader { decoration.rule = .below }
+
+      return Paragraph(content: content, base: [.paragraphStyle: style, .decoration: decoration, .font: TranscriptStyle.font])
+    }
+  }
+
+  private static func inline(_ parsed: AttributedString, runs: [AttributedString.Runs.Run], font: NSFont, color: NSColor) -> NSMutableAttributedString {
+    let result = NSMutableAttributedString()
+
+    for run in runs {
+      let intent = run.inlinePresentationIntent ?? []
+      // A hard break stays inside its paragraph as a line separator.
+      let text = intent.contains(.lineBreak) ? "\u{2028}" : String(parsed[run.range].characters)
+      var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+      var traits = font.fontDescriptor.symbolicTraits
+
+      if intent.contains(.stronglyEmphasized) { traits.insert(.bold) }
+
+      if intent.contains(.emphasized) { traits.insert(.italic) }
+
+      if intent.contains(.code) {
+        attributes[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize - 1.5, weight: traits.contains(.bold) ? .semibold : .regular)
+        attributes[.backgroundColor] = NSColor.quaternarySystemFill
+      } else if traits != font.fontDescriptor.symbolicTraits {
+        attributes[.font] = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: font.pointSize) ?? font
+      }
+
+      if intent.contains(.strikethrough) { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+
+      if let link = run.link ?? run.imageURL { attributes[.link] = link }
+
+      result.append(NSAttributedString(string: text, attributes: attributes))
+    }
+
+    return result
+  }
+}

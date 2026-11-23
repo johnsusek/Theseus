@@ -1,8 +1,5 @@
 import AppKit
 import ClaudeWorkspace
-import os
-
-let log = Logger(subsystem: "net.johnsolo.Theseus", category: "app")
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {

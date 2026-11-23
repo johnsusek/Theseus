@@ -1,0 +1,109 @@
+import AppKit
+import Testing
+
+@MainActor
+struct TranscriptRendererTests {
+  let renderer = TranscriptRenderer()
+
+  func paragraphStyle(_ text: NSAttributedString, at location: Int = 0) -> NSParagraphStyle? { text.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle }
+
+  @Test func elementsEndWithANewlineUnlessLast() {
+    let element = TranscriptElement(id: "a", kind: .reply("Hello"))
+
+    #expect(renderer.attributedString(for: element, terminated: true).string == "Hello\n")
+    #expect(renderer.attributedString(for: element, terminated: false).string == "Hello")
+  }
+
+  @Test func promptIsABubbleThatHugsTheRightEdge() {
+    let text = renderer.attributedString(for: TranscriptElement(id: "p", kind: .prompt("Short\n\nprompt"), spacing: 22), terminated: true)
+    let decorations = [0, 6, 7].map { text.attribute(.decoration, at: $0, effectiveRange: nil) as? Decoration }
+    let width = text.attribute(.bubbleWidth, at: 0, effectiveRange: nil) as? CGFloat ?? 0
+    let style = paragraphStyle(text)
+
+    #expect(text.string == "Short\n\nprompt\n")
+    #expect(decorations.map { $0?.fill } == [.bubble, .bubble, .bubble])
+    #expect(decorations.map { $0?.roundsTop } == [true, false, false])
+    #expect(decorations.map { $0?.roundsBottom } == [false, false, true])
+    #expect(width > 30 && width < 80)
+    #expect(style?.headIndent == TranscriptStyle.bubbleIndent(textWidth: width, columnWidth: 720))
+    #expect((style?.headIndent ?? 0) > 600)
+    #expect(style?.paragraphSpacingBefore == CGFloat(27))
+  }
+
+  @Test func longPromptStartsAfterTheLead() {
+    let text = renderer.attributedString(for: TranscriptElement(id: "p", kind: .prompt(String(repeating: "word ", count: 80))), terminated: false)
+
+    #expect(paragraphStyle(text)?.headIndent == CGFloat(Decoration.bubbleLead + Decoration.bubbleInset))
+    #expect(paragraphStyle(text)?.tailIndent == CGFloat(-Decoration.bubbleInset))
+  }
+
+  @Test func toolRowTogglesAndTintsItsLineCounts() {
+    let row = ToolRow(id: "t1", verb: "Edited", target: "A.swift", added: 12, removed: 3, isExpanded: false, tooltip: "/tmp/A.swift")
+    let text = renderer.attributedString(for: TranscriptElement(id: "t1", kind: .tool(row)), terminated: false)
+    let string = text.string as NSString
+
+    #expect(text.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "Edited A.swift  +12 -3  @")
+    #expect(text.attribute(.toggle, at: 0, effectiveRange: nil) as? String == "t1")
+    #expect(text.attribute(.toggle, at: text.length - 1, effectiveRange: nil) as? String == "t1")
+    #expect(text.attribute(.toolTip, at: 0, effectiveRange: nil) as? String == "/tmp/A.swift")
+    #expect(text.attribute(.activeTint, at: string.range(of: "+12").location, effectiveRange: nil) as? NSColor == .systemGreen)
+    #expect(text.attribute(.activeTint, at: string.range(of: "-3").location, effectiveRange: nil) as? NSColor == .systemRed)
+    #expect(text.attribute(.activeTint, at: 0, effectiveRange: nil) == nil)
+  }
+
+  @Test func runningAndFailedRowsCarryAMark() {
+    var marks: [StatusMark] = []
+    var renderer = TranscriptRenderer()
+    renderer.mark = { mark in
+      marks.append(mark)
+      return NSTextAttachment()
+    }
+
+    let running = renderer.attributedString(for: TranscriptElement(id: "t1", kind: .tool(ToolRow(id: "t1", verb: "Running", target: "swift test", state: .running))), terminated: false)
+    let waiting = renderer.attributedString(for: TranscriptElement(id: "t2", kind: .tool(ToolRow(id: "t2", verb: "Editing", target: "A.swift", state: .waiting))), terminated: false)
+    let failed = renderer.attributedString(for: TranscriptElement(id: "t3", kind: .tool(ToolRow(id: "t3", verb: "Ran", target: "swift build", state: .failed))), terminated: false)
+
+    #expect(marks == [.running, .running, .failed])
+    #expect(running.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "@ Running swift test  @")
+    #expect(waiting.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "@ Editing A.swift  Needs Approval  @")
+    #expect(failed.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "Ran swift build @  @")
+  }
+
+  @Test func boxedRowsAndDetailCarryTheBorder() {
+    let row = TranscriptElement(id: "t1", kind: .tool(ToolRow(id: "t1", verb: "Ran", target: "ls")), spacing: 8, box: BoxSlot(isFirst: true))
+    let detail = TranscriptElement(id: "t1/detail", kind: .detail([.command("$ ls"), .diff([" keep", "-old", "+new"])]), spacing: 0, box: BoxSlot(isLast: true))
+    let rowText = renderer.attributedString(for: row, terminated: true)
+    let detailText = renderer.attributedString(for: detail, terminated: false)
+    let boxes = [0, 5, 11, 16].map { (detailText.attribute(.decoration, at: $0, effectiveRange: nil) as? Decoration)?.box }
+
+    #expect((rowText.attribute(.decoration, at: 0, effectiveRange: nil) as? Decoration)?.box == Decoration.Box(isFirst: true, isLast: false, topGap: 8, hasDivider: false))
+    #expect(paragraphStyle(rowText)?.headIndent == CGFloat(Decoration.boxInset))
+    #expect(paragraphStyle(rowText)?.paragraphSpacingBefore == CGFloat(16))
+    #expect(detailText.string == "$ ls\n keep\n-old\n+new")
+    #expect(boxes.map { $0?.isLast } == [false, false, false, true])
+    #expect([0, 5, 11, 16].map { (detailText.attribute(.decoration, at: $0, effectiveRange: nil) as? Decoration)?.fill } == [.code, nil, .removed, .added])
+    #expect(paragraphStyle(detailText, at: 16)?.paragraphSpacing == CGFloat(8))
+  }
+
+  @Test func cardsAreOneAttachment() {
+    var asked: [String] = []
+    var renderer = TranscriptRenderer()
+    renderer.card = { element in
+      asked.append(element.id)
+      return NSTextAttachment()
+    }
+
+    let text = renderer.attributedString(for: TranscriptElement(id: "permission/r1", kind: .permission(requestId: "r1"), spacing: 8), terminated: true)
+
+    #expect(asked == ["permission/r1"])
+    #expect(text.string == "\u{FFFC}\n")
+    #expect(paragraphStyle(text)?.paragraphSpacingBefore == CGFloat(8))
+  }
+
+  @Test func permissionBodyTintsAnEdit() {
+    let body = renderer.permissionBody(.diff([" keep", "-old", "+new"]))
+
+    #expect(body.string == " keep\n-old\n+new")
+    #expect([0, 6, 11].map { (body.attribute(.decoration, at: $0, effectiveRange: nil) as? Decoration)?.fill } == [nil, .removed, .added])
+  }
+}
