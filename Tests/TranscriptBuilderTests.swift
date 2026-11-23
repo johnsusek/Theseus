@@ -29,6 +29,16 @@ struct TranscriptBuilderTests {
     ])
   }
 
+  @Test func stoppedTurnSaysSoInItsFooter() throws {
+    let interrupted: JSONValue = ["type": "user", "uuid": "i1", "message": ["role": "user", "content": [["type": "text", "text": "[Request interrupted by user]"]]], "parent_tool_use_id": nil]
+    var builder = makeBuilder()
+    let elements = builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go"), said("Half a"), interrupted, finished()])))
+
+    guard case .footer(let text) = elements.last?.kind else { return #expect(Bool(false), "The footer is missing") }
+
+    #expect(text.hasSuffix(" \u{B7} Stopped"))
+  }
+
   @Test func sentPromptsShowAfterTheRunningTurn() throws {
     var builder = makeBuilder()
     let running = try transcript([prompt("First"), said("Working.")])

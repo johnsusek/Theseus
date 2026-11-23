@@ -258,7 +258,7 @@ struct TranscriptBuilder {
     built.agentIds = body.agentIds
     built.openCallIds = body.openCallIds
 
-    if turn.status != .running, let footer = footer(for: turn) {
+    if turn.status != .running, let footer = footer(for: turn, in: context.transcript) {
       built.elements.append(TranscriptElement(id: "\(turn.id)/footer", kind: .footer(footer)))
     }
 
@@ -544,8 +544,15 @@ struct TranscriptBuilder {
     }
   }
 
-  private func footer(for turn: Turn) -> String? {
+  /// "2:14 PM · 1m 52s", with "Stopped" after a turn the user interrupted, which the CLI marks with a user message of its own.
+  private func footer(for turn: Turn, in transcript: Transcript) -> String? {
     guard let startedAt = turn.startedAt else { return nil }
+
+    let wasStopped = transcript.messages[turn.messageRange].contains { message in
+      guard case .user(let user) = message.kind else { return false }
+
+      return user.content.text.hasPrefix("[Request interrupted by user")
+    }
 
     var style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).hour().minute()
 
@@ -554,7 +561,7 @@ struct TranscriptBuilder {
 
     if !calendar.isDate(startedAt, equalTo: .now, toGranularity: .year) { style = style.year() }
 
-    return [startedAt.formatted(style), turn.duration.map(durationText)].compactMap { $0 }.joined(separator: " \u{B7} ")
+    return [startedAt.formatted(style), turn.duration.map(durationText), wasStopped ? "Stopped" : nil].compactMap { $0 }.joined(separator: " \u{B7} ")
   }
 
   /// "0.4s" under ten seconds, "1m 52s" above.
