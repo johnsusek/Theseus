@@ -426,7 +426,7 @@ struct TranscriptBuilder {
 
       if let usage = task.usage {
         notes.append(usage.toolUses == 1 ? "1 tool use" : "\(usage.toolUses) tool uses")
-        notes.append(tokenCount(usage.totalTokens))
+        notes.append(tokenCount(usage.totalTokens, locale: locale))
       }
     }
 
@@ -546,11 +546,5 @@ struct TranscriptBuilder {
     if duration < .seconds(10) { return duration.formatted(.units(allowed: [.seconds], width: .narrow, fractionalPart: .show(length: 1)).locale(locale)) }
 
     return duration.formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow).locale(locale))
-  }
-
-  private func tokenCount(_ tokens: Int) -> String {
-    if tokens < 1000 { return "\(tokens) tokens" }
-
-    return (Double(tokens) / 1000).formatted(.number.precision(.fractionLength(1)).locale(locale)) + "k tokens"
   }
 }

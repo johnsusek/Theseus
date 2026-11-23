@@ -68,6 +68,7 @@ targets:
       - path: App/Log.swift
       - path: App/Markdown.swift
       - path: App/PermissionPrompt.swift
+      - path: App/StatusModel.swift
       - path: App/StorageDiff.swift
       - path: App/ToolPhrases.swift
       - path: App/TranscriptElement.swift

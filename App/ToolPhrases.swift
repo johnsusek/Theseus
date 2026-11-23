@@ -94,6 +94,11 @@ func toolTarget(_ name: String, input: JSONValue) -> String {
   }
 }
 
+/// A running call as a sentence: "Reading TerminalView.swift".
+func toolActivity(_ name: String, input: JSONValue) -> String {
+  [toolPhrase(for: name).present, toolTarget(name, input: input)].filter { !$0.isEmpty }.joined(separator: " ")
+}
+
 /// The first line of `text`, with the middle cut out when it is longer than `limit`.
 func oneLine(_ text: String, limit: Int) -> String {
   let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
