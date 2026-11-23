@@ -277,7 +277,8 @@ enum Markdown {
     return table.rows.enumerated().map { index, row in
       let cells = table.columns.indices.map { column in row.cells[column].map { lines($0, width: widths[column]) } ?? [] }
       let content = NSMutableAttributedString()
-      let style = TranscriptStyle.paragraph(before: index == 0 ? blockSpacing : 4, after: row.isHeader ? 4 : 0, indent: table.left)
+      let isLast = index == table.rows.count - 1
+      let style = TranscriptStyle.paragraph(before: index == 0 ? blockSpacing : 4, after: isLast ? 0 : 4, indent: table.left)
       var decoration = Decoration(left: table.left, quoteBars: table.quoteBars)
 
       style.tabStops = Array(stops.dropFirst(leadsWithTab ? 0 : 1))
@@ -294,7 +295,8 @@ enum Markdown {
         }
       }
 
-      if row.isHeader { decoration.rule = .below }
+      // A rule under every row but the last keeps wrapped rows apart.
+      if !isLast { decoration.rule = .below }
 
       return Paragraph(content: content, base: [.paragraphStyle: style, .decoration: DecorationValue(decoration), .font: TranscriptStyle.font, .fitsColumn: true])
     }
