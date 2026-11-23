@@ -116,6 +116,29 @@ struct TranscriptTextTests {
     #expect(text.element(at: 5)?.id == "b")
   }
 
+  @Test func rerenderRewritesOnlyMarkedElements() {
+    var text = TranscriptText()
+    let storage = NSMutableAttributedString()
+    var suffix = ""
+
+    func render(_ element: TranscriptElement) -> NSAttributedString {
+      guard case .reply(let words) = element.kind else { return NSAttributedString() }
+
+      return words.hasPrefix("table") ? NSAttributedString(string: words + suffix + "\n", attributes: [.fitsColumn: true]) : NSAttributedString(string: words + "\n")
+    }
+
+    let elements = [element("a", "table one"), element("b", "plain"), element("c", "table two")]
+    _ = text.update(to: elements, in: storage, render: render)
+    suffix = " wider"
+
+    #expect(text.rerender(having: .fitsColumn, in: storage, render: render) == [NSRange(location: 31, length: 6), NSRange(location: 9, length: 7)])
+    #expect(storage.string == "table one wider\nplain\ntable two wider")
+    #expect(text.range(of: "c", in: storage.length) == NSRange(location: 22, length: 15))
+    // Later updates still line up with the text.
+    _ = text.update(to: elements + [element("d", "after")], in: storage, render: render)
+    #expect(storage.string == "table one wider\nplain\ntable two wider\nafter")
+  }
+
   @Test func randomEditsMatchAFullRender() {
     var seed: UInt64 = 42
 

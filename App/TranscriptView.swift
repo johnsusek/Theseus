@@ -100,7 +100,7 @@ final class TranscriptView: NSView {
 
     if textView.textContainerInset != inset { textView.textContainerInset = inset }
 
-    fitBubbles()
+    fitColumn()
   }
 
   /// Shows the conversation as it is now. `requests` are the unanswered permission prompts, oldest first.
@@ -177,14 +177,20 @@ final class TranscriptView: NSView {
     }
   }
 
-  /// A bubble starts where its widest line ends at the column's edge, which moves when the column's width does.
-  private func fitBubbles() {
+  /// A bubble starts where its widest line ends at the column's edge, which moves when the column's width does, and tables wrap to fit it.
+  private func fitColumn() {
     let width = textView.bounds.width - textView.textContainerInset.width * 2
     guard width > 0, width != renderer.columnWidth, let content = textView.textContentStorage, let storage = content.textStorage else { return }
 
     renderer.columnWidth = width
 
     content.performEditingTransaction {
+      let written = text.rerender(having: .fitsColumn, in: storage) { renderer.attributedString(for: $0) }
+
+      if !isActive {
+        for range in written { tint(storage, in: range) }
+      }
+
       storage.enumerateAttribute(.bubbleWidth, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
         guard let textWidth = value as? CGFloat else { return }
 
@@ -306,7 +312,10 @@ final class TranscriptView: NSView {
   }
 
   /// TextKit 2 settles the document's height during layout, after the edit that changed it.
+  /// The width changes without this view resizing when a legacy scroller comes or goes, which moves the column.
   @objc private func documentResized() {
+    if textView.bounds.width - textView.textContainerInset.width * 2 != renderer.columnWidth { needsLayout = true }
+
     if isPinned { scrollToBottom() }
   }
 }

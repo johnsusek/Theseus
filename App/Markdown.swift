@@ -7,6 +7,8 @@ struct MarkdownStyle: Hashable {
   /// Space kept clear on each side of every block.
   var left = 0.0
   var right = 0.0
+  /// The column's width. Tables wider than it wrap their cells.
+  var width = CGFloat.infinity
 }
 
 /// Markdown as styled paragraphs: headings, lists, quotes, fenced code on a rounded background, tables as tab-stopped rows.
@@ -171,7 +173,7 @@ enum Markdown {
 
       if let cell {
         if table?.identity != cell.table {
-          paragraphs += table.map(rows) ?? []
+          paragraphs += table.map { rows($0, style: style) } ?? []
           table = Table(identity: cell.table, columns: cell.columns, left: left, quoteBars: quoteBars)
         }
 
@@ -184,7 +186,7 @@ enum Markdown {
         continue
       }
 
-      paragraphs += table.map(rows) ?? []
+      paragraphs += table.map { rows($0, style: style) } ?? []
       table = nil
 
       if marker != nil, wasListItem { before = 4 }
@@ -226,7 +228,7 @@ enum Markdown {
       paragraphs.append(Paragraph(content: content, base: base))
     }
 
-    return paragraphs + (table.map(rows) ?? [])
+    return paragraphs + (table.map { rows($0, style: style) } ?? [])
   }
 
   /// Monospaced lines on one rounded background, a paragraph per line.
@@ -243,8 +245,9 @@ enum Markdown {
     }
   }
 
-  /// TextKit 2 has no table layout, so a row is one line with a tab stop per column, as wide as the column's widest cell.
-  private static func rows(_ table: Table) -> [Paragraph] {
+  /// TextKit 2 has no table layout, so a row is a line per wrapped cell line, with a tab stop per column.
+  /// A column is as wide as its widest cell while the table fits the column; otherwise `fit` narrows the widest columns.
+  private static func rows(_ table: Table, style: MarkdownStyle) -> [Paragraph] {
     let gap = 24.0
     var widths = [CGFloat](repeating: 0, count: table.columns.count)
 
@@ -252,6 +255,7 @@ enum Markdown {
       for (column, cell) in row.cells where column < widths.count { widths[column] = max(widths[column], ceil(cell.size().width)) }
     }
 
+    widths = fit(widths, into: style.width - style.right - table.left - gap * CGFloat(max(widths.count - 1, 0)))
     var starts: [CGFloat] = []
     var next = table.left
 
@@ -271,22 +275,78 @@ enum Markdown {
     }
 
     return table.rows.enumerated().map { index, row in
+      let cells = table.columns.indices.map { column in row.cells[column].map { lines($0, width: widths[column]) } ?? [] }
       let content = NSMutableAttributedString()
       let style = TranscriptStyle.paragraph(before: index == 0 ? blockSpacing : 4, after: row.isHeader ? 4 : 0, indent: table.left)
       var decoration = Decoration(left: table.left, quoteBars: table.quoteBars)
 
       style.tabStops = Array(stops.dropFirst(leadsWithTab ? 0 : 1))
+      // A line a rounding error too wide would wrap its last word back to the first column.
+      style.lineBreakMode = .byClipping
 
-      for column in table.columns.indices {
-        if column > 0 || leadsWithTab { content.append(NSAttributedString(string: "\t")) }
+      for line in 0..<max(cells.map(\.count).max() ?? 0, 1) {
+        if line > 0 { content.append(NSAttributedString(string: "\u{2028}")) }
 
-        if let cell = row.cells[column] { content.append(cell) }
+        for column in table.columns.indices {
+          if column > 0 || leadsWithTab { content.append(NSAttributedString(string: "\t")) }
+
+          if line < cells[column].count { content.append(cells[column][line]) }
+        }
       }
 
       if row.isHeader { decoration.rule = .below }
 
-      return Paragraph(content: content, base: [.paragraphStyle: style, .decoration: DecorationValue(decoration), .font: TranscriptStyle.font])
+      return Paragraph(content: content, base: [.paragraphStyle: style, .decoration: DecorationValue(decoration), .font: TranscriptStyle.font, .fitsColumn: true])
     }
+  }
+
+  /// Column widths that add up to at most `available`. Columns narrower than an even share keep their width,
+  /// and the others split what is left evenly, but none goes under 40 pt.
+  static func fit(_ widths: [CGFloat], into available: CGFloat) -> [CGFloat] {
+    guard widths.reduce(0, +) > available else { return widths }
+
+    var fitted = widths
+    var wide = Set(widths.indices)
+    var budget = available
+
+    while true {
+      let share = budget / CGFloat(wide.count)
+      let narrow = wide.filter { widths[$0] <= share }
+
+      if narrow.isEmpty {
+        for column in wide { fitted[column] = max(floor(share), 40) }
+
+        return fitted
+      }
+
+      for column in narrow { budget -= widths[column] }
+
+      wide.subtract(narrow)
+    }
+  }
+
+  /// A cell's lines when it wraps at `width`: at a line separator, between words, or inside a word too long for a line.
+  private static func lines(_ cell: NSAttributedString, width: CGFloat) -> [NSAttributedString] {
+    guard ceil(cell.size().width) > width || cell.string.contains("\u{2028}") else { return [cell] }
+
+    let typesetter = CTTypesetterCreateWithAttributedString(cell)
+    var lines: [NSAttributedString] = []
+    var start = 0
+
+    while start < cell.length {
+      var count = CTTypesetterSuggestLineBreak(typesetter, start, Double(width))
+
+      if count == 0 { count = max(CTTypesetterSuggestClusterBreak(typesetter, start, Double(width)), 1) }
+
+      let line = NSMutableAttributedString(attributedString: cell.attributedSubstring(from: NSRange(location: start, length: count)))
+
+      while let last = line.string.unicodeScalars.last, CharacterSet.whitespacesAndNewlines.contains(last) { line.deleteCharacters(in: NSRange(location: line.length - 1, length: 1)) }
+
+      lines.append(line)
+      start += count
+    }
+
+    return lines
   }
 
   private static func inline(_ parsed: AttributedString, runs: [AttributedString.Runs.Run], font: NSFont, color: NSColor) -> NSMutableAttributedString {

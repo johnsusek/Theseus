@@ -26,6 +26,25 @@ struct MarkdownTests {
     #expect(text("| a | b | c |\n|---|---|---|\n| 1 |   | 3 |") == "a\tb\tc\n1\t\t3")
   }
 
+  @Test func wideTablesWrapCellsInsideTheirColumns() {
+    let source = "| Key | Purpose |\n|---|---|\n| groupID | App group shared by the app, the agent and the extension |"
+    let wrapped = Markdown.paragraphs(source, style: MarkdownStyle(width: 260))
+    let row = wrapped[1].content.string
+
+    #expect(Markdown.paragraphs(source)[1].content.string == "groupID\tApp group shared by the app, the agent and the extension")
+    // Every line of the row starts in the first column and puts the purpose's words after one tab.
+    #expect(row.contains("\u{2028}"))
+    #expect(row.components(separatedBy: "\u{2028}").allSatisfy { $0.components(separatedBy: "\t").count == 2 })
+    #expect(row.components(separatedBy: "\u{2028}").map { $0.components(separatedBy: "\t")[1] }.joined(separator: " ") == "App group shared by the app, the agent and the extension")
+    #expect(wrapped[1].base[.fitsColumn] as? Bool == true)
+  }
+
+  @Test func fittingNarrowsOnlyTheWideColumns() {
+    #expect(Markdown.fit([50, 100], into: 200) == [50, 100])
+    #expect(Markdown.fit([50, 300, 300], into: 250) == [50, 100, 100])
+    #expect(Markdown.fit([10, 10], into: 5) == [40, 40])
+  }
+
   @Test func inlineStylesMapToAttributes() {
     let rendered = Markdown.paragraphs("Plain **bold** *italic* `code` ~~gone~~ [link](https://example.com)").joined(terminated: false)
     let string = rendered.string as NSString

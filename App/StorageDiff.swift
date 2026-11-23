@@ -162,6 +162,44 @@ struct TranscriptText {
     return written
   }
 
+  /// Renders again the elements whose text in `storage` has `key`, such as tables laid out for a column width that changed.
+  mutating func rerender(having key: NSAttributedString.Key, in storage: NSMutableAttributedString, render: (TranscriptElement) -> NSAttributedString) -> [NSRange] {
+    let starts = entries.reduce(into: [0]) { starts, entry in starts.append(starts[starts.count - 1] + entry.length) }
+    var written: [NSRange] = []
+
+    // From the end back, so the elements still to visit keep their offsets.
+    for index in entries.indices.reversed() {
+      // The last element's newline is not in the storage.
+      let range = NSRange(location: starts[index], length: min(starts[index + 1], storage.length) - starts[index])
+      var hasKey = false
+
+      guard range.length > 0 else { continue }
+
+      storage.enumerateAttribute(key, in: range) { value, _, stop in
+        hasKey = value != nil
+        stop.pointee = ObjCBool(hasKey)
+      }
+
+      guard hasKey else { continue }
+
+      let piece = render(entries[index].element)
+      guard piece.length > 0 else { continue }
+
+      let text = starts[index + 1] > storage.length ? piece.attributedSubstring(from: NSRange(location: 0, length: piece.length - 1)) : piece
+      let shared = commonPrefixLength(storage.attributedSubstring(from: range), text)
+      let change = NSRange(location: range.location + shared, length: range.length - shared)
+      let replacement = text.attributedSubstring(from: NSRange(location: shared, length: text.length - shared))
+
+      storage.replaceCharacters(in: change, with: replacement)
+      written = written.map { NSRange(location: $0.location + replacement.length - change.length, length: $0.length) }
+      written.append(NSRange(location: change.location, length: replacement.length))
+      entries[index].length = piece.length
+      entries[index].terminator = piece.attributedSubstring(from: NSRange(location: piece.length - 1, length: 1))
+    }
+
+    return written
+  }
+
   /// Where an element's text is in a storage of `length` characters.
   func range(of id: String, in length: Int) -> NSRange? {
     var location = 0

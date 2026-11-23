@@ -9,6 +9,8 @@ extension NSAttributedString.Key {
   static let activeTint = NSAttributedString.Key("Theseus.activeTint")
   /// The width of a prompt's widest line, which sets where its bubble starts.
   static let bubbleWidth = NSAttributedString.Key("Theseus.bubbleWidth")
+  /// On text laid out for the column's width, such as a table's rows, which is rendered again when the width changes.
+  static let fitsColumn = NSAttributedString.Key("Theseus.fitsColumn")
 }
 
 /// What the layout draws behind one paragraph: a slice of a bubble, code block or diff, a group's border, quote bars, a rule.

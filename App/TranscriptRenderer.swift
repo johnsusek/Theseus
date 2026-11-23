@@ -9,7 +9,7 @@ enum StatusMark {
 /// Turns one element into the attributed text the transcript holds for it.
 @MainActor
 struct TranscriptRenderer {
-  /// The text container's width, which decides where prompt bubbles start.
+  /// The text container's width, which decides where prompt bubbles start and how wide tables can be.
   var columnWidth = 720.0
   /// Makes the view attachment for a task list or a permission request.
   var card: (TranscriptElement) -> NSTextAttachment = { _ in NSTextAttachment() }
@@ -68,9 +68,9 @@ struct TranscriptRenderer {
       content.append(TranscriptStyle.text("  " + text, font: TranscriptStyle.callout, color: .secondaryLabelColor))
       return [line(content)]
     case .reply(let text):
-      return Markdown.paragraphs(text)
+      return Markdown.paragraphs(text, style: MarkdownStyle(width: columnWidth))
     case .thought(let text):
-      return Markdown.paragraphs(text, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), color: .secondaryLabelColor, lineSpacing: 3))
+      return Markdown.paragraphs(text, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), color: .secondaryLabelColor, lineSpacing: 3, width: columnWidth))
     case .thinking:
       let content = NSMutableAttributedString(attachment: mark(.running))
       content.append(NSAttributedString(string: " Thinking", attributes: secondary))
@@ -184,7 +184,7 @@ struct TranscriptRenderer {
       case .diff(let lines):
         added = codeLines(lines, tinted: true, inset: inset, color: .secondaryLabelColor)
       case .report(let text):
-        added = Markdown.paragraphs(text, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), color: .secondaryLabelColor, lineSpacing: 3, left: inset, right: inset))
+        added = Markdown.paragraphs(text, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), color: .secondaryLabelColor, lineSpacing: 3, left: inset, right: inset, width: columnWidth))
       case .more(let id, let hidden):
         added = [line(TranscriptStyle.text("Show \(hidden.formatted()) More Lines", font: TranscriptStyle.callout, color: .secondaryLabelColor), indent: inset, toggle: id)]
       case .less(let id):
