@@ -187,11 +187,6 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     app.openConversation(in: project)
   }
 
-  /// The tab bar's + button.
-  override func newWindowForTab(_ sender: Any?) {
-    app.openConversation(in: project)
-  }
-
   @objc func stopSession(_ sender: Any?) {
     guard let live = session?.live else { return }
 

@@ -107,6 +107,7 @@ final class TranscriptView: NSView {
     }
 
     let committed = fresh.length
+    renderedMessages = transcript.messages.count
 
     for case .text(let text) in streaming.blocks { add(text, Self.reply) }
 
@@ -117,7 +118,6 @@ final class TranscriptView: NSView {
       storage.replaceCharacters(in: NSRange(location: committedLength, length: storage.length - committedLength), with: fresh)
     }
 
-    renderedMessages = transcript.messages.count
     committedLength += committed
     tail = freshTail
 

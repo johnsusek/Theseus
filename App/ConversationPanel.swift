@@ -8,6 +8,11 @@ final class ConversationPanel: NSPanel {
   /// A panel with a close button closes on Esc and on Command-Period; a conversation should not.
   override func cancelOperation(_ sender: Any?) {}
 
+  /// The tab bar's + button.
+  override func newWindowForTab(_ sender: Any?) {
+    (windowController as? ConversationController)?.newConversation(sender)
+  }
+
   /// Tab groups report membership changes but not tab bar visibility, and the titles depend on it.
   override func toggleTabBar(_ sender: Any?) {
     super.toggleTabBar(sender)
