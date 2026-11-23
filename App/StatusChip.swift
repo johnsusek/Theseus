@@ -54,7 +54,8 @@ final class StatusChip: NSButton {
   }
 }
 
-/// "+18 -4" in green and red. Outside the main window both are gray, and on a selected row both take the row's text color.
+/// "+18 -4" in green and red, or "+0" for a change with no lines, such as a new empty file.
+/// Outside the main window both are gray, and on a selected row both take the row's text color.
 @MainActor
 func lineDeltaText(added: Int, removed: Int, font: NSFont, isActive: Bool, isEmphasized: Bool = false) -> NSAttributedString {
   let result = NSMutableAttributedString()
@@ -62,7 +63,7 @@ func lineDeltaText(added: Int, removed: Int, font: NSFont, isActive: Bool, isEmp
 
   if isEmphasized { plain = .alternateSelectedControlTextColor }
 
-  if added > 0 { result.append(NSAttributedString(string: "+\(added)", attributes: [.font: font, .foregroundColor: isActive && !isEmphasized ? NSColor.systemGreen : plain])) }
+  if added > 0 || removed == 0 { result.append(NSAttributedString(string: "+\(added)", attributes: [.font: font, .foregroundColor: isActive && !isEmphasized ? NSColor.systemGreen : plain])) }
 
   if added > 0, removed > 0 { result.append(NSAttributedString(string: " ", attributes: [.font: font])) }
 

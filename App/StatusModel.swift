@@ -68,16 +68,21 @@ func agentRows(_ transcript: Transcript, processIsRunning: Bool, locale: Locale 
     var state = AgentRow.State.stopped
     var doing = "Stopped"
 
+    // "Finished: <first line of the report>", or the bare word for an agent that reported nothing.
+    func outcome(_ word: String, _ report: String?) -> String {
+      [word, oneLine(report ?? "", limit: 120)].filter { !$0.isEmpty }.joined(separator: ": ")
+    }
+
     if task.status.isActive, processIsRunning {
       let running = transcript.toolCalls.last { $0.parentToolUseId == task.id && $0.status == .running }
       state = .running
       doing = running.map { toolActivity($0.name, input: $0.input) } ?? "Thinking"
     } else if task.status == .completed {
       state = .done
-      doing = ["Finished", task.summary.map { oneLine($0, limit: 120) }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ": ")
+      doing = outcome("Finished", task.summary)
     } else if task.status == .failed {
       state = .failed
-      doing = ["Failed", (task.error ?? task.summary).map { oneLine($0, limit: 120) }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ": ")
+      doing = outcome("Failed", task.error ?? task.summary)
     }
 
     // Progress frames replace a task's description with what it is doing, so the title comes from the Agent call.

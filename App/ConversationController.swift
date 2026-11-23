@@ -70,7 +70,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.status.agents.action = #selector(showAgents(_:))
     content.status.changes.target = self
     content.status.changes.action = #selector(showChanges(_:))
-    content.status.menuItems = { [unowned self] button in button === content.status.model ? menuItems(.model, labeled: true) + menuItems(.effort, labeled: true) + [.separator(), fastModeItem()] : menuItems(.mode) }
+    content.status.menuItems = { [unowned self] button in button === content.status.model ? menuItems(.model, labeled: true) + menuItems(.effort, labeled: true) + [.separator(), pickItem("Fast Mode", #selector(toggleFastMode(_:)), nil)] : menuItems(.mode) }
     start()
   }
 
@@ -357,26 +357,17 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     switch kind {
     case .model:
       items = (live.initializeInfo?.models ?? []).map { model in
-        let item = NSMenuItem(title: model.displayName, action: #selector(pickModel(_:)), keyEquivalent: "")
-        item.representedObject = model.value
+        let item = pickItem(model.displayName, #selector(pickModel(_:)), model.value)
         item.toolTip = model.description
         return item
       }
     case .effort:
-      items = (live.modelInfo?.supportedEffortLevels ?? []).map { level in
-        let item = NSMenuItem(title: effortName(level), action: #selector(pickEffort(_:)), keyEquivalent: "")
-        item.representedObject = level
-        return item
-      }
+      items = (live.modelInfo?.supportedEffortLevels ?? []).map { pickItem(effortName($0), #selector(pickEffort(_:)), $0) }
     case .mode:
       // The CLI refuses to enter bypassPermissions in a session launched without it, so it is not offered.
       let modes: [PermissionMode] = live.modelInfo?.supportsAutoMode == true ? [.default, .acceptEdits, .plan, .auto] : [.default, .acceptEdits, .plan]
 
-      items = modes.map { mode in
-        let item = NSMenuItem(title: modeName(mode), action: #selector(pickPermissionMode(_:)), keyEquivalent: "")
-        item.representedObject = mode.rawValue
-        return item
-      }
+      items = modes.map { pickItem(modeName($0), #selector(pickPermissionMode(_:)), $0.rawValue) }
     }
 
     if labeled, !items.isEmpty { items.insert(.sectionHeader(title: kind == .model ? "Model" : "Effort"), at: 0) }
@@ -384,8 +375,12 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     return items
   }
 
-  private func fastModeItem() -> NSMenuItem {
-    NSMenuItem(title: "Fast Mode", action: #selector(toggleFastMode(_:)), keyEquivalent: "")
+  /// An item that picks `value` in this conversation, whichever window is key when it is chosen.
+  private func pickItem(_ title: String, _ action: Selector, _ value: String?) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+    item.target = self
+    item.representedObject = value
+    return item
   }
 
   @objc func pickModel(_ sender: NSMenuItem) {
