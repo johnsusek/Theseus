@@ -9,7 +9,9 @@ enum SessionMenu: Int {
 final class SessionMenuDelegate: NSObject, NSMenuDelegate {
   func menuNeedsUpdate(_ menu: NSMenu) {
     // With a popover open the key window is the popover's, and the conversation is the main window.
-    let conversation = (NSApp.keyWindow?.windowController ?? NSApp.mainWindow?.windowController) as? ConversationController
+    // An inactive app has neither, and accessibility clients still open its menus, so the frontmost conversation answers.
+    let windows = [NSApp.keyWindow, NSApp.mainWindow].compactMap(\.self) + NSApp.orderedWindows
+    let conversation = windows.lazy.compactMap { $0.windowController as? ConversationController }.first
 
     for item in menu.items {
       guard let submenu = item.submenu, let kind = SessionMenu(rawValue: item.tag) else { continue }
