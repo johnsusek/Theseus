@@ -26,8 +26,8 @@ final class ViewAttachment: NSTextAttachment {
     image = NSImage(size: NSSize(width: 1, height: 1))
   }
 
-  @available(*, unavailable)
-  required init?(coder: NSCoder) { fatalError("ViewAttachment is built in code") }
+  /// AppKit can archive the transcript's text. A copy that is unarchived has no view to make, so it decodes to nothing.
+  required init?(coder: NSCoder) { nil }
 
   /// Without a registered provider class for its file type, an attachment reports no view unless told otherwise.
   override var usesTextAttachmentView: Bool { true }

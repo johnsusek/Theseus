@@ -4,7 +4,8 @@ import Foundation
 /// One tool call as a sentence.
 struct ToolRow: Equatable {
   enum State: Equatable {
-    case running, waiting, completed, failed
+    /// `stopped` is a call that got no result before its turn ended.
+    case running, waiting, completed, failed, stopped
   }
 
   /// The tool call's id, which a click toggles.
@@ -131,11 +132,12 @@ struct TranscriptBuilder {
     var isRunning: Bool
     var tasks: [TaskItem]
     var pending: [PendingRequest]
+    /// A footer names the day unless it is today.
+    var today: Date
   }
 
   private struct CachedTurn {
     var key: TurnKey
-    var agentIds: [String]
     var agents: [AgentState?]
     var built: BuiltTurn
   }
@@ -145,13 +147,15 @@ struct TranscriptBuilder {
     /// Requests shown under their tool call.
     var placed: Set<String> = []
     var agentIds: [String] = []
+    /// Calls with no result yet. One can still arrive after the turn's own frames have stopped.
+    var openCallIds: [String] = []
   }
 
   private enum Entry {
     case reply(id: String, text: String)
     case thought(id: String, text: String)
     case thinking(id: String)
-    case prompt(id: String, text: String)
+    case prompt(id: String, text: String, origin: String?)
     case tool(id: String, name: String, input: JSONValue, call: ToolCall?)
 
     var folds: Bool {
@@ -165,6 +169,8 @@ struct TranscriptBuilder {
     var transcript: Transcript
     var pending: [PendingRequest]
     var agents: [String: ClaudeTask]
+    /// The turn being built can still get results for its calls.
+    var isRunning = false
   }
 
   /// Opens or closes a row or group, or shows or hides the rest of a capped output.
@@ -178,29 +184,34 @@ struct TranscriptBuilder {
 
   mutating func elements(for input: TranscriptInput) -> [TranscriptElement] {
     let turns = input.transcript.turns
-    let context = Context(transcript: input.transcript, pending: input.pending, agents: Dictionary(input.transcript.tasks.map { ($0.id, $0) }) { first, _ in first })
+    var context = Context(transcript: input.transcript, pending: input.pending, agents: Dictionary(input.transcript.tasks.map { ($0.id, $0) }) { first, _ in first })
+    let today = calendar.startOfDay(for: .now)
     var elements = [TranscriptElement(id: "header", kind: .header(input.header), spacing: 0)]
     var placed: Set<String> = []
     var streamed = false
 
     for (index, turn) in turns.enumerated() {
       let isRunning = index == turns.count - 1 && input.isLive && turn.status == .running
-      let key = TurnKey(range: turn.messageRange, lastItemId: turn.items.last?.id, status: turn.status, isRunning: isRunning, tasks: isRunning ? input.tasks : [], pending: input.pending)
+      let key = TurnKey(range: turn.messageRange, lastItemId: turn.items.last?.id, status: turn.status, isRunning: isRunning, tasks: isRunning ? input.tasks : [], pending: input.pending, today: today)
       var built: BuiltTurn
+
+      context.isRunning = isRunning
 
       if isRunning, !input.streaming.isEmpty {
         streamed = true
         built = build(turn, key: key, streaming: input.streaming, context: context)
-      } else if let cached = cache[turn.id], cached.key == key, cached.agentIds.map({ agentState(context.agents[$0]) }) == cached.agents {
+      } else if let cached = cache[turn.id], cached.key == key, isCurrent(cached, context: context) {
         built = cached.built
       } else {
         built = build(turn, key: key, streaming: [], context: context)
-        cache[turn.id] = CachedTurn(key: key, agentIds: built.agentIds, agents: built.agentIds.map { agentState(context.agents[$0]) }, built: built)
+        cache[turn.id] = CachedTurn(key: key, agents: built.agentIds.map { agentState(context.agents[$0]) }, built: built)
       }
 
       elements += built.elements
       placed.formUnion(built.placed)
     }
+
+    context.isRunning = true
 
     // Stream events can outrun the frame that opens their turn.
     if !streamed, input.isLive, !input.streaming.isEmpty {
@@ -219,6 +230,11 @@ struct TranscriptBuilder {
     task.map { AgentState(status: $0.status, usage: $0.usage, summary: $0.summary) }
   }
 
+  /// Whether what a kept turn showed of its agents and unanswered calls still holds. Neither changes the turn's own frames.
+  private func isCurrent(_ cached: CachedTurn, context: Context) -> Bool {
+    cached.built.agentIds.map { agentState(context.agents[$0]) } == cached.agents && cached.built.openCallIds.allSatisfy { context.transcript.toolCall($0)?.result == nil }
+  }
+
   private func build(_ turn: Turn, key: TurnKey, streaming: [StreamingMessage.Block], context: Context) -> BuiltTurn {
     var built = BuiltTurn()
 
@@ -230,8 +246,9 @@ struct TranscriptBuilder {
     built.elements += body.elements
     built.placed = body.placed
     built.agentIds = body.agentIds
+    built.openCallIds = body.openCallIds
 
-    if !key.isRunning, turn.status != .running, let footer = footer(for: turn) {
+    if turn.status != .running, let footer = footer(for: turn) {
       built.elements.append(TranscriptElement(id: "\(turn.id)/footer", kind: .footer(footer)))
     }
 
@@ -267,8 +284,8 @@ struct TranscriptBuilder {
         if isVerbose, !text.allSatisfy(\.isWhitespace) { entries.append(.thought(id: id, text: text)) }
       case .toolCall(let callId):
         if let call = context.transcript.toolCall(callId) { entries.append(.tool(id: callId, name: call.name, input: call.input, call: call)) }
-      case .prompt(let blocks):
-        if !blocks.text.allSatisfy(\.isWhitespace) { entries.append(.prompt(id: id, text: blocks.text)) }
+      case .prompt(let blocks, let origin):
+        if !blocks.text.allSatisfy(\.isWhitespace) { entries.append(.prompt(id: id, text: blocks.text, origin: origin)) }
       }
     }
 
@@ -322,6 +339,9 @@ struct TranscriptBuilder {
       index = end
     }
 
+    // A turn with nothing to show yet, or only thinking that has since been folded away, still lists its tasks.
+    if isFirst, !tasks.isEmpty { built.elements.append(TranscriptElement(id: "tasks", kind: .tasks(tasks))) }
+
     return built
   }
 
@@ -333,13 +353,15 @@ struct TranscriptBuilder {
       built.elements.append(TranscriptElement(id: id, kind: .thought(text.trimmingCharacters(in: .whitespacesAndNewlines))))
     case .thinking(let id):
       built.elements.append(TranscriptElement(id: id, kind: .thinking))
-    case .prompt(let id, let text):
-      built.elements.append(TranscriptElement(id: id, kind: .prompt(text.trimmingCharacters(in: .whitespacesAndNewlines))))
+    case .prompt(let id, let text, let origin):
+      built.elements.append(TranscriptElement(id: id, kind: promptKind(text, origin: origin)))
     case .tool(let id, let name, let input, let call):
       let row = row(id: id, name: name, input: input, call: call, context: context)
       built.elements.append(TranscriptElement(id: id, kind: .tool(row)))
 
       if context.agents[id] != nil { built.agentIds.append(id) }
+
+      if call?.result == nil { built.openCallIds.append(id) }
 
       for request in context.pending where request.toolUseId == id {
         built.elements.append(TranscriptElement(id: "permission/\(request.requestId)", kind: .permission(requestId: request.requestId), spacing: 8))
@@ -396,7 +418,7 @@ struct TranscriptBuilder {
       row.state = .failed
       row.verb = phrase.past
     default:
-      row.state = context.pending.contains { $0.toolUseId == id } ? .waiting : .running
+      row.state = context.pending.contains { $0.toolUseId == id } ? .waiting : context.isRunning ? .running : .stopped
     }
 
     if let task = context.agents[id] {
@@ -438,9 +460,11 @@ struct TranscriptBuilder {
 
     if name == "Bash", let command = input["command"]?.string {
       blocks.append(.command("$ " + command))
-    } else if toolPhrase(for: name).past.hasPrefix("Used "), !readableJSON(input).isEmpty {
+    } else if toolPhrase(for: name).past.hasPrefix("Used ") {
       // A tool without a phrase of its own says nothing about its input in the row, so the detail shows it.
-      blocks.append(.output(readableJSON(input)))
+      let json = readableJSON(input)
+
+      if !json.isEmpty { blocks.append(.output(json)) }
     }
 
     if let task = context.agents[id] {

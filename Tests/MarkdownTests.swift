@@ -5,7 +5,7 @@ import Testing
 struct MarkdownTests {
   func text(_ source: String) -> String { Markdown.paragraphs(source).joined(terminated: false).string }
 
-  func decorations(_ source: String) -> [Decoration?] { Markdown.paragraphs(source).map { $0.base[.decoration] as? Decoration } }
+  func decorations(_ source: String) -> [Decoration?] { Markdown.paragraphs(source).map { ($0.base[.decoration] as? DecorationValue)?.decoration } }
 
   @Test func chunksSplitOnlyBetweenTopLevelBlocks() {
     #expect(Markdown.chunks(of: "One.\n\nTwo.\n\n\nThree.") == ["One.", "Two.", "Three."])
@@ -13,6 +13,8 @@ struct MarkdownTests {
     #expect(Markdown.chunks(of: "- item\n\n  continued\n\nNext") == ["- item\n\n  continued", "Next"])
     #expect(Markdown.chunks(of: "Text\n\n```swift\nlet half = ") == ["Text", "```swift\nlet half = "])
     #expect(Markdown.chunks(of: "").isEmpty)
+    // A fence indented four spaces is code inside the example, so it does not close the block.
+    #expect(Markdown.chunks(of: "```markdown\n- item\n\n    ```\n\nStill inside\n```\n\nAfter.") == ["```markdown\n- item\n\n    ```\n\nStill inside\n```", "After."])
   }
 
   @Test func blocksBecomeParagraphs() {
@@ -20,6 +22,8 @@ struct MarkdownTests {
     #expect(text("1. First\n2. Second\n   - Nested") == "\t1.\tFirst\n\t2.\tSecond\n\t\u{2022}\tNested")
     #expect(text("Line one\\\nLine two") == "Line one\u{2028}Line two")
     #expect(text("| Name | Count |\n|:--|--:|\n| turns | 12 |") == "Name\tCount\nturns\t12")
+    // An empty cell keeps its column.
+    #expect(text("| a | b | c |\n|---|---|---|\n| 1 |   | 3 |") == "a\tb\tc\n1\t\t3")
   }
 
   @Test func inlineStylesMapToAttributes() {

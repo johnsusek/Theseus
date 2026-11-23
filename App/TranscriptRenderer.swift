@@ -17,8 +17,8 @@ struct TranscriptRenderer {
 
   private var secondary: [NSAttributedString.Key: Any] { [.font: TranscriptStyle.font, .foregroundColor: NSColor.secondaryLabelColor] }
 
-  /// `terminated` ends the text with a newline, which every element but the transcript's last needs.
-  func attributedString(for element: TranscriptElement, terminated: Bool) -> NSAttributedString {
+  /// The element's text, ended by a newline. Empty for an element with nothing to show, such as a reply that is only an opening code fence.
+  func attributedString(for element: TranscriptElement) -> NSAttributedString {
     var paragraphs = paragraphs(for: element)
     guard !paragraphs.isEmpty else { return NSAttributedString() }
 
@@ -38,7 +38,7 @@ struct TranscriptRenderer {
       }
     }
 
-    return paragraphs.joined(terminated: terminated)
+    return paragraphs.joined(terminated: true)
   }
 
   /// What a permission card shows of the tool call it asks about.
@@ -113,7 +113,7 @@ struct TranscriptRenderer {
       // TextKit 2 puts the line spacing above each line, the first included.
       let style = TranscriptStyle.paragraph(before: isFirst ? padding - lineSpacing : 0, after: isLast ? padding : 0, indent: indent, tail: Decoration.bubbleInset, lineSpacing: lineSpacing)
       let decoration = Decoration(fill: .bubble, roundsTop: isFirst, roundsBottom: isLast)
-      return Paragraph(content: TranscriptStyle.text(text), base: [.paragraphStyle: style, .decoration: decoration, .bubbleWidth: width, .font: TranscriptStyle.font, .foregroundColor: NSColor.labelColor])
+      return Paragraph(content: TranscriptStyle.text(text), base: [.paragraphStyle: style, .decoration: DecorationValue(decoration), .bubbleWidth: width, .font: TranscriptStyle.font, .foregroundColor: NSColor.labelColor])
     }
   }
 
@@ -140,6 +140,8 @@ struct TranscriptRenderer {
     }
 
     if row.state == .waiting { content.append(NSAttributedString(string: "  Needs Approval", attributes: secondary)) }
+
+    if row.state == .stopped { content.append(NSAttributedString(string: "  Stopped", attributes: secondary)) }
 
     content.append(chevron(isOpen: row.isExpanded))
 
@@ -210,7 +212,7 @@ struct TranscriptRenderer {
       var base: [NSAttributedString.Key: Any] = [.paragraphStyle: TranscriptStyle.paragraph(indent: inset + 10, tail: inset + 4), .font: TranscriptStyle.code, .foregroundColor: color]
 
       if tinted, let fill = text.first.flatMap({ fills[$0] }) {
-        base[.decoration] = Decoration(fill: fill, left: inset, right: inset, roundsTop: index == 0, roundsBottom: index == lines.count - 1)
+        base[.decoration] = DecorationValue(Decoration(fill: fill, left: inset, right: inset, roundsTop: index == 0, roundsBottom: index == lines.count - 1))
       }
 
       return Paragraph(content: TranscriptStyle.text(text, font: TranscriptStyle.code, color: color), base: base)

@@ -149,6 +149,45 @@ struct TranscriptBuilderTests {
     #expect(builder.elements(for: TranscriptInput(transcript: running, tasks: tasks)).map(\.shape).contains("tasks(1)") == false)
   }
 
+  @Test func taskListShowsBeforeTheTurnHasAnythingElse() throws {
+    let tasks = TaskList(try transcript([call("k1", "TaskCreate", ["subject": "Write tests"]), returned("k1", "ok", output: ["task": ["id": "1", "subject": "Write tests"]])])).tasks
+    var builder = makeBuilder()
+    let bare = try transcript([prompt("Go")])
+
+    #expect(builder.elements(for: TranscriptInput(transcript: bare, tasks: tasks, isLive: true)).map(\.shape) == ["header", "prompt(Go)", "tasks(1)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: bare, streaming: [.thinking("Hmm")], tasks: tasks, isLive: true)).map(\.shape) == ["header", "prompt(Go)", "thinking", "tasks(1)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go"), thought("Hmm")]), tasks: tasks, isLive: true)).map(\.shape) == ["header", "prompt(Go)", "tasks(1)"])
+  }
+
+  @Test func unansweredCallInAnEndedTurnIsStopped() throws {
+    var cut = try transcript([prompt("Go"), call("t1", "Bash", ["command": "sleep 600"])])
+    var builder = makeBuilder()
+
+    func states(_ transcript: Transcript, isLive: Bool) -> [ToolRow.State] {
+      builder.elements(for: TranscriptInput(transcript: transcript, isLive: isLive)).compactMap { element in
+        if case .tool(let row) = element.kind { row.state } else { nil }
+      }
+    }
+
+    #expect(states(cut, isLive: true) == [.running])
+    cut.endTurn()
+    #expect(states(cut, isLive: false) == [.stopped])
+
+    // A result that arrives after the turn has ended still reaches a turn the builder has kept.
+    cut.apply(try Message.decode(returned("t1", "late"), from: try returned("t1", "late").encoded()))
+    #expect(states(cut, isLive: false).first == .completed)
+  }
+
+  @Test func midTurnNotificationIsALineNotABubble() throws {
+    let transcript = try transcript([
+      prompt("Go"), said("Working."),
+      prompt("<task-notification><summary>Agent finished</summary></task-notification>", at: "10:01:00", origin: "task_notification"),
+      prompt("And one more thing", at: "10:02:00")
+    ])
+
+    #expect(shapes(transcript, isLive: true) == ["header", "prompt(Go)", "reply(Working.)", "notice(bell, Agent finished)", "prompt(And one more thing)"])
+  }
+
   @Test func turnsOtherThingsStartedAreOneLine() throws {
     let transcript = try transcript([
       prompt("<task-notification><task-id>7</task-id><summary>Agent finished scanning</summary></task-notification>", origin: "task_notification"), said("Noted."), finished(milliseconds: 2400),
@@ -180,7 +219,7 @@ struct TranscriptBuilderTests {
     #expect(elements[3].kind == .detail([.report("Found two files")]))
   }
 
-  @Test func finishedTurnsAreKeptBetweenBuilds() throws {
+  @Test func earlierTurnsAreUnchangedWhenALaterOneGrows() throws {
     let frames = [prompt("Go"), said("One."), finished(), prompt("Again", at: "10:05:00"), said("Two.")]
     var builder = makeBuilder()
     let first = builder.elements(for: TranscriptInput(transcript: try transcript(frames), isLive: true))

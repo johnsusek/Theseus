@@ -32,6 +32,8 @@ struct PermissionPrompt: Equatable {
       allowTitle = "Approve"
       denyTitle = "Keep Planning"
       isPlan = true
+      // Approving a plan sets the mode to continue in, so there are no suggested rules to save with it.
+      checkbox = nil
     case "Edit", "MultiEdit", "NotebookEdit":
       let edits = input["edits"]?.array ?? [input]
       title = "Edit \(file)?"

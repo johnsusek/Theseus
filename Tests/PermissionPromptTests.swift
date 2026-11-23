@@ -26,6 +26,7 @@ struct PermissionPromptTests {
 
     #expect(plan.body == .markdown("1. Do it"))
     #expect(plan.allowTitle == "Approve" && plan.denyTitle == "Keep Planning" && plan.isPlan)
+    #expect(prompt("ExitPlanMode", ["plan": "1. Do it"], suggestions: [.setMode(.acceptEdits, destination: .session)]).checkbox == nil)
   }
 
   @Test func suggestionsReadAsPlainWords() {

@@ -11,7 +11,7 @@ final class TranscriptLayoutDelegate: NSObject, NSTextLayoutManagerDelegate {
   let state = DecorationState()
 
   func textLayoutManager(_ textLayoutManager: NSTextLayoutManager, textLayoutFragmentFor location: any NSTextLocation, in textElement: NSTextElement) -> NSTextLayoutFragment {
-    guard let text = (textElement as? NSTextParagraph)?.attributedString, text.length > 0, let decoration = text.attribute(.decoration, at: 0, effectiveRange: nil) as? Decoration else {
+    guard let text = (textElement as? NSTextParagraph)?.attributedString, text.length > 0, let decoration = (text.attribute(.decoration, at: 0, effectiveRange: nil) as? DecorationValue)?.decoration else {
       return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
     }
 

@@ -39,7 +39,7 @@ final class TranscriptView: NSView {
   /// Unanswered requests, oldest first.
   private var requests: [PermissionRequest] = []
   private var cardStates: [String: PermissionCardState] = [:]
-  private var rendered: [(element: TranscriptElement, length: Int)] = []
+  private var text = TranscriptText()
   /// The view follows new text while it sits at the bottom; scrolling up lets go.
   private var isPinned = true
   private var isScrollingToBottom = false
@@ -82,6 +82,7 @@ final class TranscriptView: NSView {
 
     NotificationCenter.default.addObserver(self, selector: #selector(clipChanged), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
     NotificationCenter.default.addObserver(self, selector: #selector(documentResized), name: NSView.frameDidChangeNotification, object: textView)
+    NotificationCenter.default.addObserver(self, selector: #selector(fellBack), name: NSTextView.willSwitchToNSLayoutManagerNotification, object: textView)
   }
 
   @available(*, unavailable)
@@ -154,33 +155,17 @@ final class TranscriptView: NSView {
   /// Rebuilds the elements and replaces the text of those that changed. Text above a change is not touched, so a selection there stays.
   /// `keepsPosition` is for a change the user made by clicking, which should not move what is under the pointer.
   private func update(keepsPosition: Bool) {
-    let fresh = builder.elements(for: input)
-    let edits = elementEdits(from: rendered.map(\.element), to: fresh)
-    guard !edits.isEmpty else { return }
     guard let content = textView.textContentStorage, let storage = content.textStorage else { return assertionFailure("The transcript fell back to TextKit 1") }
-
-    let starts = rendered.reduce(into: [0]) { starts, entry in starts.append(starts[starts.count - 1] + entry.length) }
 
     // Letting go of the bottom first keeps the resize that follows from scrolling the clicked row away.
     if keepsPosition { isPinned = false }
 
     content.performEditingTransaction {
-      for edit in edits {
-        let range = NSRange(location: starts[edit.old.lowerBound], length: starts[edit.old.upperBound] - starts[edit.old.lowerBound])
-        let pieces = edit.new.map { renderer.attributedString(for: fresh[$0], terminated: $0 < fresh.count - 1) }
-        let text = NSMutableAttributedString()
+      let written = text.update(to: builder.elements(for: input), in: storage) { renderer.attributedString(for: $0) }
 
-        for piece in pieces { text.append(piece) }
-
-        // An element that only grew or changed its end keeps the text they share, as a streaming reply does on every delta.
-        let isSameElement = edit.old.count == 1 && edit.new.count == 1 && rendered[edit.old.lowerBound].element.id == fresh[edit.new.lowerBound].id
-        let shared = isSameElement ? commonPrefixLength(storage.attributedSubstring(from: range), text) : 0
-
-        storage.replaceCharacters(in: NSRange(location: range.location + shared, length: range.length - shared), with: text.attributedSubstring(from: NSRange(location: shared, length: text.length - shared)))
-        rendered.replaceSubrange(edit.old, with: zip(edit.new, pieces).map { (fresh[$0], $1.length) })
+      if !isActive {
+        for range in written { tint(storage, in: range) }
       }
-
-      if !isActive { tint(storage, in: NSRange(location: 0, length: storage.length)) }
     }
 
     layoutSubtreeIfNeeded()
@@ -216,30 +201,6 @@ final class TranscriptView: NSView {
     }
   }
 
-  private func range(of id: String) -> NSRange? {
-    var location = 0
-
-    for entry in rendered {
-      if entry.element.id == id { return NSRange(location: location, length: entry.length) }
-
-      location += entry.length
-    }
-
-    return nil
-  }
-
-  private func element(at offset: Int) -> TranscriptElement? {
-    var end = 0
-
-    for entry in rendered {
-      end += entry.length
-
-      if offset < end { return entry.element }
-    }
-
-    return rendered.last?.element
-  }
-
   // MARK: Cards
 
   private func card(for element: TranscriptElement) -> NSTextAttachment {
@@ -272,7 +233,7 @@ final class TranscriptView: NSView {
   private func contextItems(at offset: Int) -> [NSMenuItem] {
     var source: CopySource?
 
-    switch element(at: offset)?.kind {
+    switch text.element(at: offset)?.kind {
     case .prompt(let text), .notice(_, _, let text): source = CopySource(title: "Copy Prompt", text: text)
     case .reply(let text): source = CopySource(title: "Copy Reply", text: text)
     case .tool(let row): source = row.copy
@@ -298,7 +259,7 @@ final class TranscriptView: NSView {
 
   /// Scrolls an element into view when the pinned bottom does not already show it.
   private func reveal(_ id: String) {
-    guard let range = range(of: id), let layout = textView.textLayoutManager, let content = textView.textContentStorage else { return }
+    guard let layout = textView.textLayoutManager, let content = textView.textContentStorage, let range = text.range(of: id, in: textView.textStorage?.length ?? 0) else { return }
     guard let start = content.location(content.documentRange.location, offsetBy: range.location), let end = content.location(start, offsetBy: range.length), let textRange = NSTextRange(location: start, end: end) else { return }
 
     var frame = CGRect.null
@@ -337,6 +298,11 @@ final class TranscriptView: NSView {
     } else if !isScrollingToBottom {
       isPinned = isAtBottom
     }
+  }
+
+  /// Something asked the text view for its TextKit 1 layout manager. The transcript's bubbles, tints and updates all need TextKit 2.
+  @objc private func fellBack() {
+    log.error("The transcript is switching to TextKit 1 and will stop updating")
   }
 
   /// TextKit 2 settles the document's height during layout, after the edit that changed it.

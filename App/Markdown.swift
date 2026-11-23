@@ -20,24 +20,35 @@ enum Markdown {
   private struct Table {
     var identity: Int
     var columns: [PresentationIntent.TableColumn]
-    var rows: [(identity: Int, isHeader: Bool, cells: [NSAttributedString])] = []
+    /// A row's cells by column. An empty cell has no entry.
+    var rows: [(identity: Int, isHeader: Bool, cells: [Int: NSAttributedString])] = []
     var left: CGFloat
     var quoteBars: [CGFloat]
   }
 
   private static var cache: [Chunk: [Paragraph]] = [:]
+  private static var cachedBytes = 0
   private static let options = AttributedString.MarkdownParsingOptions(allowsExtendedAttributes: true, interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
 
-  /// Parses `source` in chunks that are kept, so a reply that grows as it streams only parses its last chunk again.
+  /// Parses `source` in chunks and keeps every chunk but the last, so a reply that grows as it streams only parses its last chunk again.
+  /// The last chunk is the one still growing; keeping each of its versions would hold a long code block once per delta.
   static func paragraphs(_ source: String, style: MarkdownStyle = MarkdownStyle()) -> [Paragraph] {
-    if cache.count > 4000 { cache = [:] }
-
+    let chunks = chunks(of: source)
     var result: [Paragraph] = []
 
-    for text in chunks(of: source) {
+    if cachedBytes > 4_000_000 {
+      cache = [:]
+      cachedBytes = 0
+    }
+
+    for (index, text) in chunks.enumerated() {
       let key = Chunk(text: text, style: style)
       var parsed = cache[key] ?? parse(text, style: style)
-      cache[key] = parsed
+
+      if index < chunks.count - 1, cache[key] == nil {
+        cache[key] = parsed
+        cachedBytes += text.utf8.count
+      }
 
       // The first block sits flush with what is above it; a code block keeps only its own padding.
       if result.isEmpty, !parsed.isEmpty {
@@ -60,7 +71,8 @@ enum Markdown {
 
     for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
       let trimmed = line.drop { $0 == " " }
-      let marker = trimmed.prefix { $0 == "`" || $0 == "~" }
+      // Four or more spaces of indentation make a line code, not a fence.
+      let marker = line.count - trimmed.count < 4 ? trimmed.prefix { $0 == "`" || $0 == "~" } : ""
 
       if line.allSatisfy(\.isWhitespace), fence == nil {
         blanks.append(line)
@@ -120,7 +132,7 @@ enum Markdown {
       var marker: String?
       var font = style.font
       var before = blockSpacing
-      var cell: (table: Int, columns: [PresentationIntent.TableColumn], row: Int, isHeader: Bool)?
+      var cell: (table: Int, columns: [PresentationIntent.TableColumn], row: Int, column: Int, isHeader: Bool)?
       var code = false
       var isRule = false
 
@@ -144,12 +156,14 @@ enum Markdown {
         case .thematicBreak:
           isRule = true
         case .table(let columns):
-          cell = (component.identity, columns, 0, false)
+          cell = (component.identity, columns, 0, 0, false)
         case .tableHeaderRow:
           cell?.row = component.identity
           cell?.isHeader = true
         case .tableRow:
           cell?.row = component.identity
+        case .tableCell(let column):
+          cell?.column = column
         default:
           break
         }
@@ -163,9 +177,9 @@ enum Markdown {
 
         var rows = table?.rows ?? []
 
-        if rows.last?.identity != cell.row { rows.append((cell.row, cell.isHeader, [])) }
+        if rows.last?.identity != cell.row { rows.append((cell.row, cell.isHeader, [:])) }
 
-        rows[rows.count - 1].cells.append(inline(parsed, runs: block.runs, font: cell.isHeader ? NSFont.systemFont(ofSize: style.font.pointSize, weight: .semibold) : style.font, color: style.color))
+        rows[rows.count - 1].cells[cell.column] = inline(parsed, runs: block.runs, font: cell.isHeader ? NSFont.systemFont(ofSize: style.font.pointSize, weight: .semibold) : style.font, color: style.color)
         table?.rows = rows
         continue
       }
@@ -188,7 +202,7 @@ enum Markdown {
         decoration.rule = .middle
         decoration.left = left
         decoration.right = style.right
-        paragraphs.append(Paragraph(content: TranscriptStyle.text(" ", font: style.font), base: [.paragraphStyle: TranscriptStyle.paragraph(before: before), .decoration: decoration]))
+        paragraphs.append(Paragraph(content: TranscriptStyle.text(" ", font: style.font), base: [.paragraphStyle: TranscriptStyle.paragraph(before: before), .decoration: DecorationValue(decoration)]))
         continue
       }
 
@@ -207,7 +221,7 @@ enum Markdown {
 
       var base: [NSAttributedString.Key: Any] = [.paragraphStyle: paragraph, .font: font, .foregroundColor: style.color]
 
-      if !quoteBars.isEmpty { base[.decoration] = decoration }
+      if !quoteBars.isEmpty { base[.decoration] = DecorationValue(decoration) }
 
       paragraphs.append(Paragraph(content: content, base: base))
     }
@@ -225,7 +239,7 @@ enum Markdown {
       let padding = Decoration.Fill.code.padding
       let style = TranscriptStyle.paragraph(before: isFirst ? before + padding : 0, after: isLast ? padding : 0, indent: left + 12, tail: right + 12)
       let decoration = Decoration(fill: .code, left: left, right: right, roundsTop: isFirst, roundsBottom: isLast, quoteBars: quoteBars)
-      return Paragraph(content: TranscriptStyle.text(line, font: TranscriptStyle.code, color: color), base: [.paragraphStyle: style, .decoration: decoration, .font: TranscriptStyle.code, .foregroundColor: color])
+      return Paragraph(content: TranscriptStyle.text(line, font: TranscriptStyle.code, color: color), base: [.paragraphStyle: style, .decoration: DecorationValue(decoration), .font: TranscriptStyle.code, .foregroundColor: color])
     }
   }
 
@@ -235,7 +249,7 @@ enum Markdown {
     var widths = [CGFloat](repeating: 0, count: table.columns.count)
 
     for row in table.rows {
-      for (column, cell) in row.cells.enumerated() where column < widths.count { widths[column] = max(widths[column], ceil(cell.size().width)) }
+      for (column, cell) in row.cells where column < widths.count { widths[column] = max(widths[column], ceil(cell.size().width)) }
     }
 
     var starts: [CGFloat] = []
@@ -263,15 +277,15 @@ enum Markdown {
 
       style.tabStops = Array(stops.dropFirst(leadsWithTab ? 0 : 1))
 
-      for (column, cell) in row.cells.enumerated() {
+      for column in table.columns.indices {
         if column > 0 || leadsWithTab { content.append(NSAttributedString(string: "\t")) }
 
-        content.append(cell)
+        if let cell = row.cells[column] { content.append(cell) }
       }
 
       if row.isHeader { decoration.rule = .below }
 
-      return Paragraph(content: content, base: [.paragraphStyle: style, .decoration: decoration, .font: TranscriptStyle.font])
+      return Paragraph(content: content, base: [.paragraphStyle: style, .decoration: DecorationValue(decoration), .font: TranscriptStyle.font])
     }
   }
 

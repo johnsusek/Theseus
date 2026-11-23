@@ -1,7 +1,7 @@
 import AppKit
 
 extension NSAttributedString.Key {
-  /// A `Decoration`, on a paragraph the layout draws something behind.
+  /// A `DecorationValue`, on a paragraph the layout draws something behind.
   static let decoration = NSAttributedString.Key("Theseus.decoration")
   /// The id a click on the paragraph opens or closes.
   static let toggle = NSAttributedString.Key("Theseus.toggle")
@@ -12,8 +12,8 @@ extension NSAttributedString.Key {
 }
 
 /// What the layout draws behind one paragraph: a slice of a bubble, code block or diff, a group's border, quote bars, a rule.
-struct Decoration: Hashable, Sendable {
-  enum Fill: Hashable, Sendable {
+struct Decoration: Hashable, Sendable, Codable {
+  enum Fill: Hashable, Sendable, Codable {
     case bubble, code, added, removed
 
     var radius: CGFloat {
@@ -34,7 +34,7 @@ struct Decoration: Hashable, Sendable {
     }
   }
 
-  struct Box: Hashable, Sendable {
+  struct Box: Hashable, Sendable, Codable {
     var isFirst = false
     var isLast = false
     /// Space kept clear above the border, on the first paragraph.
@@ -42,7 +42,7 @@ struct Decoration: Hashable, Sendable {
     var hasDivider = false
   }
 
-  enum Rule: Hashable, Sendable {
+  enum Rule: Hashable, Sendable, Codable {
     case below, middle
   }
 
@@ -63,6 +63,31 @@ struct Decoration: Hashable, Sendable {
   var rule: Rule?
 }
 
+/// A `Decoration` as an attribute value. AppKit archives attributed text for Look Up, Share and Services,
+/// and a bare Swift struct in it makes the archiver throw.
+final class DecorationValue: NSObject, NSSecureCoding {
+  static var supportsSecureCoding: Bool { true }
+  let decoration: Decoration
+
+  init(_ decoration: Decoration) {
+    self.decoration = decoration
+  }
+
+  init?(coder: NSCoder) {
+    guard let data = coder.decodeObject(of: NSData.self, forKey: "decoration"), let decoration = try? JSONDecoder().decode(Decoration.self, from: data as Data) else { return nil }
+
+    self.decoration = decoration
+  }
+
+  func encode(with coder: NSCoder) {
+    coder.encode(try? JSONEncoder().encode(decoration), forKey: "decoration")
+  }
+
+  override var hash: Int { decoration.hashValue }
+
+  override func isEqual(_ object: Any?) -> Bool { (object as? DecorationValue)?.decoration == decoration }
+}
+
 /// One paragraph of an element. `base` also styles the newline that ends it, which an empty line needs to keep its decoration.
 struct Paragraph {
   var content: NSAttributedString
@@ -74,8 +99,8 @@ struct Paragraph {
   }
 
   var decoration: Decoration {
-    get { base[.decoration] as? Decoration ?? Decoration() }
-    set { base[.decoration] = newValue }
+    get { (base[.decoration] as? DecorationValue)?.decoration ?? Decoration() }
+    set { base[.decoration] = DecorationValue(newValue) }
   }
 
   mutating func restyle(_ change: (NSMutableParagraphStyle) -> Void) {
@@ -119,12 +144,12 @@ enum TranscriptStyle {
   static let code = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
   private static var symbols: [String: NSTextAttachment] = [:]
 
-  static func paragraph(before: CGFloat = 0, after: CGFloat = 0, indent: CGFloat = 0, firstIndent: CGFloat? = nil, tail: CGFloat = 0, lineSpacing: CGFloat = 0) -> NSMutableParagraphStyle {
+  static func paragraph(before: CGFloat = 0, after: CGFloat = 0, indent: CGFloat = 0, tail: CGFloat = 0, lineSpacing: CGFloat = 0) -> NSMutableParagraphStyle {
     let style = NSMutableParagraphStyle()
     style.paragraphSpacingBefore = before
     style.paragraphSpacing = after
     style.headIndent = indent
-    style.firstLineHeadIndent = firstIndent ?? indent
+    style.firstLineHeadIndent = indent
     style.tailIndent = -tail
     style.lineSpacing = lineSpacing
     return style
