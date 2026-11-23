@@ -66,7 +66,7 @@ struct TranscriptRenderer {
     case .notice(let symbol, let text, _):
       let content = NSMutableAttributedString(attributedString: TranscriptStyle.symbol(symbol, pointSize: 11, in: TranscriptStyle.callout))
       content.append(TranscriptStyle.text("  " + text, font: TranscriptStyle.callout, color: .secondaryLabelColor))
-      return [line(content, spacing: 22)]
+      return [line(content)]
     case .reply(let text):
       return Markdown.paragraphs(text)
     case .thought(let text):
@@ -91,8 +91,8 @@ struct TranscriptRenderer {
     }
   }
 
-  private func line(_ content: NSAttributedString, spacing: CGFloat = 0, indent: CGFloat = 0, toggle: String? = nil) -> Paragraph {
-    var base: [NSAttributedString.Key: Any] = [.paragraphStyle: TranscriptStyle.paragraph(before: spacing, indent: indent, tail: indent), .font: TranscriptStyle.font]
+  private func line(_ content: NSAttributedString, indent: CGFloat = 0, toggle: String? = nil) -> Paragraph {
+    var base: [NSAttributedString.Key: Any] = [.paragraphStyle: TranscriptStyle.paragraph(indent: indent, tail: indent), .font: TranscriptStyle.font]
 
     if let toggle { base[.toggle] = toggle }
 

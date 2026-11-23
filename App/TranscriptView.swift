@@ -161,6 +161,9 @@ final class TranscriptView: NSView {
 
     let starts = rendered.reduce(into: [0]) { starts, entry in starts.append(starts[starts.count - 1] + entry.length) }
 
+    // Letting go of the bottom first keeps the resize that follows from scrolling the clicked row away.
+    if keepsPosition { isPinned = false }
+
     content.performEditingTransaction {
       for edit in edits {
         let range = NSRange(location: starts[edit.old.lowerBound], length: starts[edit.old.upperBound] - starts[edit.old.lowerBound])

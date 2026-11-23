@@ -53,7 +53,7 @@ final class TranscriptTextView: NSTextView {
   }
 
   /// The toggle id of the paragraph whose text is under `point`.
-  private func toggleId(at point: NSPoint) -> String? {
+  func toggleId(at point: NSPoint) -> String? {
     guard let hit = fragment(at: point), hit.fragment.textLineFragments.contains(where: { $0.typographicBounds.contains(hit.local) }) else { return nil }
     guard let text = (hit.fragment.textElement as? NSTextParagraph)?.attributedString, text.length > 0 else { return nil }
 
