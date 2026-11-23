@@ -79,12 +79,17 @@ func makeMainMenu(recentProjects: any NSMenuDelegate) -> NSMenu {
       ])
     ]),
     menu("View", [
+      item("Show Verbose Transcript", #selector(ConversationController.toggleVerboseTranscript(_:))),
+      .separator(),
       item("Show Tab Bar", #selector(NSWindow.toggleTabBar(_:))),
       item("Show All Tabs", #selector(NSWindow.toggleTabOverview(_:)), "\\", [.command, .shift]),
       .separator(),
       item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])
     ]),
     menu("Session", [
+      item("Allow", #selector(ConversationController.allowRequest(_:)), "\r"),
+      item("Deny", #selector(ConversationController.denyRequest(_:)), "d"),
+      .separator(),
       item("Stop", #selector(ConversationController.stopSession(_:)), ".")
     ]),
     submenu(window),

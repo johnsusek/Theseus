@@ -8,7 +8,6 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private unowned let app: AppDelegate
   private let content = ConversationView()
   private let tabStatus = TabStatusView()
-  private let permissions = PermissionSheet()
   private var session: Session?
   private var starting: Task<Session, any Error>?
   private var startFailed = false
@@ -56,6 +55,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.prompt.textView.placeholder = "Describe a task or ask a question"
     content.prompt.onSend = { [unowned self] in send() }
     content.prompt.onStop = { [unowned self] in stopSession(nil) }
+    content.transcript.onDecision = { [unowned self] request, decision in session?.live?.respond(to: request, with: decision) }
     start()
   }
 
@@ -113,7 +113,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
     session = nil
     generation += 1
-    let starting = Task { [workspace = app.workspace, project] in try await workspace.start(in: project) }
+    let starting = Task { [workspace = app.workspace, project] in try await workspace.start(in: project) { $0.enableTaskTools = true } }
     self.starting = starting
     startFailed = false
 
@@ -134,7 +134,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
   /// Pushes the session's state into the window. Runs again whenever something it read changes.
   private func refresh() {
-    guard let window, let session, let live = session.live else { return }
+    guard let session, let live = session.live else { return }
 
     retitle()
 
@@ -148,8 +148,11 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
     content.prompt.isBusy = isBusy
     content.prompt.textView.placeholder = session.transcript.turns.isEmpty ? "Describe a task or ask a question" : "Reply"
-    content.transcript.show(session.transcript, streaming: live.streaming)
-    permissions.update(live, on: window)
+
+    let place = [session.worktree ?? project.lastPathComponent, session.gitBranch].compactMap { $0 }.joined(separator: " \u{B7} ")
+    let pending = live.pendingPermissions.map { PendingRequest(requestId: $0.requestId, toolUseId: $0.toolUseId) }
+    let input = TranscriptInput(header: "Started in \(place)", transcript: session.transcript, streaming: live.streaming.blocks, tasks: live.taskList.tasks, pending: pending, isLive: live.isRunning)
+    content.transcript.show(input, requests: live.pendingPermissions, projectName: project.lastPathComponent)
   }
 
   /// Sends the draft, waiting for the process if it is still starting and resuming the session if its process has exited.
@@ -170,7 +173,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
         // A failed start has already put up its own alert.
         guard let session = try? await starting?.value else { return restore(text) }
 
-        try await app.workspace.open(session).send(text)
+        try await app.workspace.open(session) { $0.enableTaskTools = true }.send(text)
         hasSent = true
       } catch {
         restore(text)
@@ -225,23 +228,43 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     }
   }
 
+  /// Session > Allow and Deny answer the oldest permission request, as its card's buttons would.
+  @objc func allowRequest(_ sender: Any?) {
+    content.transcript.answerOldestRequest(allow: true)
+  }
+
+  @objc func denyRequest(_ sender: Any?) {
+    content.transcript.answerOldestRequest(allow: false)
+  }
+
+  @objc func toggleVerboseTranscript(_ sender: Any?) {
+    content.transcript.isVerbose.toggle()
+  }
+
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-    menuItem.action == #selector(stopSession(_:)) ? isBusy : true
+    switch menuItem.action {
+    case #selector(stopSession(_:)):
+      return isBusy
+    case #selector(allowRequest(_:)), #selector(denyRequest(_:)):
+      return content.transcript.hasPendingRequest
+    case #selector(toggleVerboseTranscript(_:)):
+      menuItem.title = content.transcript.isVerbose ? "Show Normal Transcript" : "Show Verbose Transcript"
+      return true
+    default:
+      return true
+    }
   }
 
   // MARK: Window
 
-  func windowDidBecomeKey(_ notification: Notification) {
-    // A permission request that arrived while this tab was in the background is asked now.
-    refresh()
-  }
-
   func windowDidBecomeMain(_ notification: Notification) {
     content.prompt.updateButton()
+    content.transcript.windowActiveChanged()
   }
 
   func windowDidResignMain(_ notification: Notification) {
     content.prompt.updateButton()
+    content.transcript.windowActiveChanged()
   }
 
   func windowDidMove(_ notification: Notification) {
