@@ -54,15 +54,18 @@ struct TranscriptBuilderTests {
       prompt("Go"),
       call("t1", "Edit", ["file_path": "/tmp/A.swift"], at: "10:00:01"), returned("t1", "done", output: ["structuredPatch": patch], at: "10:00:03"),
       call("t2", "Bash", ["command": "swift build"]), returned("t2", "error", isError: true),
-      call("t3", "Bash", ["command": "sleep 60"])
+      call("t3", "Bash", ["command": "sleep 60"]),
+      call("t4", "Write", ["file_path": "/tmp/B.swift"]), returned("t4", "The user denied this request.", isError: true),
+      call("t5", "Edit", ["file_path": "/tmp/C.swift"]), returned("t5", "<tool_use_error>String to replace not found in file.</tool_use_error>", isError: true)
     ])
     var builder = makeBuilder()
     let rows = builder.elements(for: TranscriptInput(transcript: transcript, pending: [PendingRequest(requestId: "r1", toolUseId: "t3")], isLive: true)).compactMap { element -> ToolRow? in
       if case .tool(let row) = element.kind { row } else { nil }
     }
 
-    #expect(rows.map(\.state) == [.completed, .failed, .waiting])
-    #expect(rows.map(\.verb) == ["Edited", "Ran", "Running"])
+    #expect(rows.map(\.state) == [.completed, .failed, .waiting, .failed, .failed])
+    #expect(rows.map(\.verb) == ["Edited", "Ran", "Running", "Could not create", "Could not edit"])
+    #expect(rows.map(\.note) == ["", "", "", "Denied", ""])
     #expect(rows[0].added == 2 && rows[0].removed == 1)
     #expect(rows[0].copy == CopySource(title: "Copy Path", text: "/tmp/A.swift"))
     #expect(rows[0].tooltip == "/tmp/A.swift\n2.0s")

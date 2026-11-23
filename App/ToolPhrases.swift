@@ -1,50 +1,53 @@
 import ClaudeEngine
 import Foundation
 
-/// How a tool call reads as a finished row, as a running row, and in a group's summary sentence.
+/// How a tool call reads as a finished row, as a running row, as a row that did not run, and in a group's summary sentence.
 struct ToolPhrase: Equatable {
   let past: String
   let present: String
+  /// A call that failed before it did anything, such as one that was denied.
+  let failed: String
   /// One call in a summary. `%@` takes the call's target.
   let one: String
   /// Several calls in a summary. `%d` takes the count.
   let many: String
 
-  init(_ past: String, _ present: String, _ one: String, _ many: String) {
+  init(_ past: String, _ present: String, _ failed: String, _ one: String, _ many: String) {
     self.past = past
     self.present = present
+    self.failed = failed
     self.one = one
     self.many = many
   }
 }
 
-private let editPhrase = ToolPhrase("Edited", "Editing", "edited %@", "made %d edits")
-private let searchPhrase = ToolPhrase("Searched for", "Searching for", "ran a search", "ran %d searches")
-private let agentPhrase = ToolPhrase("Ran agent", "Running agent", "ran an agent", "ran %d agents")
-private let taskListPhrase = ToolPhrase("Checked the task list", "Checking the task list", "checked the task list", "checked the task list %d times")
+private let editPhrase = ToolPhrase("Edited", "Editing", "Could not edit", "edited %@", "made %d edits")
+private let searchPhrase = ToolPhrase("Searched for", "Searching for", "Could not search for", "ran a search", "ran %d searches")
+private let agentPhrase = ToolPhrase("Ran agent", "Running agent", "Could not run agent", "ran an agent", "ran %d agents")
+private let taskListPhrase = ToolPhrase("Checked the task list", "Checking the task list", "Could not check the task list", "checked the task list", "checked the task list %d times")
 
 private let toolPhrases: [String: ToolPhrase] = [
-  "Read": ToolPhrase("Read", "Reading", "read %@", "read %d files"),
-  "Write": ToolPhrase("Created", "Creating", "created %@", "created %d files"),
+  "Read": ToolPhrase("Read", "Reading", "Could not read", "read %@", "read %d files"),
+  "Write": ToolPhrase("Created", "Creating", "Could not create", "created %@", "created %d files"),
   "Edit": editPhrase,
   "MultiEdit": editPhrase,
   "NotebookEdit": editPhrase,
-  "Bash": ToolPhrase("Ran", "Running", "ran a command", "ran %d commands"),
+  "Bash": ToolPhrase("Ran", "Running", "Could not run", "ran a command", "ran %d commands"),
   "Grep": searchPhrase,
   "Glob": searchPhrase,
   "Agent": agentPhrase,
   "Task": agentPhrase,
-  "WebFetch": ToolPhrase("Fetched", "Fetching", "fetched %@", "fetched %d pages"),
-  "WebSearch": ToolPhrase("Searched the web for", "Searching the web for", "searched the web", "ran %d web searches"),
-  "TaskCreate": ToolPhrase("Added task", "Adding task", "added a task", "added %d tasks"),
-  "TaskUpdate": ToolPhrase("Updated a task", "Updating a task", "updated a task", "updated %d tasks"),
+  "WebFetch": ToolPhrase("Fetched", "Fetching", "Could not fetch", "fetched %@", "fetched %d pages"),
+  "WebSearch": ToolPhrase("Searched the web for", "Searching the web for", "Could not search the web for", "searched the web", "ran %d web searches"),
+  "TaskCreate": ToolPhrase("Added task", "Adding task", "Could not add task", "added a task", "added %d tasks"),
+  "TaskUpdate": ToolPhrase("Updated a task", "Updating a task", "Could not update a task", "updated a task", "updated %d tasks"),
   "TaskList": taskListPhrase,
   "TaskGet": taskListPhrase,
-  "TodoWrite": ToolPhrase("Updated the task list", "Updating the task list", "updated the task list", "updated the task list %d times"),
-  "Skill": ToolPhrase("Used skill", "Using skill", "used a skill", "used %d skills"),
-  "ToolSearch": ToolPhrase("Looked up tools", "Looking up tools", "looked up tools", "looked up tools %d times"),
-  "ExitPlanMode": ToolPhrase("Proposed a plan", "Proposing a plan", "proposed a plan", "proposed %d plans"),
-  "AskUserQuestion": ToolPhrase("Asked a question", "Asking a question", "asked a question", "asked %d questions")
+  "TodoWrite": ToolPhrase("Updated the task list", "Updating the task list", "Could not update the task list", "updated the task list", "updated the task list %d times"),
+  "Skill": ToolPhrase("Used skill", "Using skill", "Could not use skill", "used a skill", "used %d skills"),
+  "ToolSearch": ToolPhrase("Looked up tools", "Looking up tools", "Could not look up tools", "looked up tools", "looked up tools %d times"),
+  "ExitPlanMode": ToolPhrase("Proposed a plan", "Proposing a plan", "Proposed a plan", "proposed a plan", "proposed %d plans"),
+  "AskUserQuestion": ToolPhrase("Asked a question", "Asking a question", "Could not ask a question", "asked a question", "asked %d questions")
 ]
 
 private let fileTools: Set<String> = ["Read", "Write", "Edit", "MultiEdit", "NotebookEdit"]
@@ -54,7 +57,7 @@ func toolPhrase(for name: String) -> ToolPhrase {
   if let phrase = toolPhrases[name] { return phrase }
 
   let display = toolDisplayName(name)
-  return ToolPhrase("Used \(display)", "Using \(display)", "used \(display)", "used \(display) %d times")
+  return ToolPhrase("Used \(display)", "Using \(display)", "Could not use \(display)", "used \(display)", "used \(display) %d times")
 }
 
 /// `mcp__SafariPilot__get_page_text` reads "SafariPilot get page text". A server named by a UUID is left out.

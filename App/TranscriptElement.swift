@@ -425,8 +425,14 @@ struct TranscriptBuilder {
       row.state = .completed
       row.verb = phrase.past
     case .failed:
+      // The CLI wraps a call it refused before running in tool_use_error, and words a denial as below.
+      let result = call?.result?.text ?? ""
+      let isDenied = result.hasPrefix("The user denied") || result.hasPrefix("Permission for this")
+
       row.state = .failed
-      row.verb = phrase.past
+      row.verb = isDenied || result.hasPrefix("<tool_use_error>") ? phrase.failed : phrase.past
+
+      if isDenied { notes.append("Denied") }
     default:
       row.state = context.pending.contains { $0.toolUseId == id } ? .waiting : context.isRunning ? .running : .stopped
     }
