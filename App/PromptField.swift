@@ -93,6 +93,7 @@ final class PromptField: NSView, NSTextViewDelegate {
 
     // The text rewraps when the field's width changes, which changes the height it needs.
     NotificationCenter.default.addObserver(self, selector: #selector(fitHeight), name: NSView.frameDidChangeNotification, object: textView)
+    NotificationCenter.default.addObserver(self, selector: #selector(clipChanged), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
     updateButton()
   }
 
@@ -139,5 +140,15 @@ final class PromptField: NSView, NSTextViewDelegate {
     let wanted = ceil(text) + Self.padding * 2
 
     if height.constant != wanted { height.constant = wanted }
+  }
+
+  /// The text view grows before the field does and scrolls the caret into view, which leaves the clip scrolled once the field catches up.
+  /// While the draft fits, the clip stays at the top.
+  @objc private func clipChanged() {
+    let clip = scrollView.contentView
+    guard clip.bounds.minY != 0, textView.frame.height <= clip.bounds.height else { return }
+
+    clip.scroll(to: .zero)
+    scrollView.reflectScrolledClipView(clip)
   }
 }
