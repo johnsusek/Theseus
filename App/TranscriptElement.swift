@@ -493,7 +493,7 @@ struct TranscriptBuilder {
 
     guard let call, call.result != nil else { return blocks }
 
-    let patch = call.isError ? [] : patchLines(call.output)
+    let patch = call.isError ? [] : patchLines(call.output) ?? []
 
     if !patch.isEmpty {
       let shown = capped(patch, id: id)
@@ -522,26 +522,6 @@ struct TranscriptBuilder {
     if lines.count > Self.cappedLines, isUnfolded { trailer.append(.less(id: "\(id)/more")) }
 
     return (shown, trailer)
-  }
-
-  /// An Edit or Write result as patch lines. A created file has no patch, so its content is all added lines.
-  private func patchLines(_ output: JSONValue?) -> [String] {
-    guard let hunks = output?["structuredPatch"]?.array else { return [] }
-
-    if hunks.isEmpty, output?["type"]?.string == "create", let content = output?["content"]?.string, !content.isEmpty {
-      var lines = content.components(separatedBy: "\n")
-
-      if lines.last == "" { lines.removeLast() }
-
-      return lines.map { "+" + $0 }
-    }
-
-    return hunks.flatMap { hunk in
-      let lines = hunk["lines"]?.array?.compactMap(\.string) ?? []
-      guard hunks.count > 1, let oldStart = hunk["oldStart"]?.int, let oldLines = hunk["oldLines"]?.int, let newStart = hunk["newStart"]?.int, let newLines = hunk["newLines"]?.int else { return lines }
-
-      return ["@@ -\(oldStart),\(oldLines) +\(newStart),\(newLines) @@"] + lines
-    }
   }
 
   /// "2:14 PM · 1m 52s", with "Stopped" after a turn the user interrupted, which the CLI marks with a user message of its own.

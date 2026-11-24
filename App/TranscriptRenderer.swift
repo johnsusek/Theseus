@@ -152,14 +152,12 @@ struct TranscriptRenderer {
     return paragraph
   }
 
-  /// "+12 -3" in green and red, which the view turns gray in an inactive window.
+  /// "  +12 -3", or nothing for a call that changed no lines.
   private func delta(added: Int, removed: Int) -> NSAttributedString {
-    let result = NSMutableAttributedString()
+    guard added > 0 || removed > 0 else { return NSAttributedString() }
 
-    if added > 0 { result.append(NSAttributedString(string: "  +\(added)", attributes: [.font: TranscriptStyle.digits, .foregroundColor: NSColor.systemGreen, .activeTint: NSColor.systemGreen])) }
-
-    if removed > 0 { result.append(NSAttributedString(string: (added > 0 ? " " : "  ") + "-\(removed)", attributes: [.font: TranscriptStyle.digits, .foregroundColor: NSColor.systemRed, .activeTint: NSColor.systemRed])) }
-
+    let result = NSMutableAttributedString(string: "  ", attributes: [.font: TranscriptStyle.digits])
+    result.append(lineDeltaText(added: added, removed: removed, font: TranscriptStyle.digits, isActive: true))
     return result
   }
 

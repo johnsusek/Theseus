@@ -186,3 +186,21 @@ enum TranscriptStyle {
     max(Decoration.bubbleLead + Decoration.bubbleInset, columnWidth - Decoration.bubbleInset - ceil(textWidth) - 1)
   }
 }
+
+/// "+18 -4" in green and red, or "+0" for a change with no lines, such as a new empty file.
+/// Outside the main window both are gray, and on a selected row both take the row's text color.
+/// The colored runs carry `.activeTint`, so the transcript can gray them when its window stops being main.
+@MainActor
+func lineDeltaText(added: Int, removed: Int, font: NSFont, isActive: Bool, isEmphasized: Bool = false) -> NSAttributedString {
+  let result = NSMutableAttributedString()
+  let isColored = isActive && !isEmphasized
+  let plain = isEmphasized ? NSColor.alternateSelectedControlTextColor : .secondaryLabelColor
+
+  if added > 0 || removed == 0 { result.append(NSAttributedString(string: "+\(added)", attributes: [.font: font, .foregroundColor: isColored ? NSColor.systemGreen : plain, .activeTint: NSColor.systemGreen])) }
+
+  if added > 0, removed > 0 { result.append(NSAttributedString(string: " ", attributes: [.font: font])) }
+
+  if removed > 0 { result.append(NSAttributedString(string: "-\(removed)", attributes: [.font: font, .foregroundColor: isColored ? NSColor.systemRed : plain, .activeTint: NSColor.systemRed])) }
+
+  return result
+}
