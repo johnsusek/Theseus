@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var conversations: [ConversationController] = []
   private let sessionMenus = SessionMenuDelegate()
   private var projectPanel: NSOpenPanel?
+  private var projects: ProjectsWindowController?
 
   /// A headless check passes a workspace that runs a stand-in CLI and keeps its records elsewhere.
   init(workspace: Workspace = Workspace(recordsDirectory: URL.applicationSupportDirectory.appending(path: "Theseus"))) {
@@ -18,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    if UserDefaults.standard.bool(forKey: "ProjectsOpen") { showProjects(nil) }
+
     Task {
       do {
         try await workspace.reload()
@@ -43,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let windows = conversations.compactMap(\.window)
 
     // A hidden app's windows are not visible either; unhiding brings them back.
-    if sender.isHidden || projectPanel != nil || windows.contains(where: \.isVisible) { return false }
+    if sender.isHidden || projectPanel != nil || projects?.window?.isVisible == true || windows.contains(where: \.isVisible) { return false }
 
     if let minimized = windows.first(where: \.isMiniaturized) {
       minimized.deminiaturize(nil)
@@ -96,6 +99,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let controller = ConversationController(app: self, project: session.project?.path ?? session.workingDirectory, session: session)
     conversations.append(controller)
     controller.open()
+  }
+
+  /// Window > Projects. Opening it rescans the transcripts, which picks up sessions run outside the app.
+  @objc func showProjects(_ sender: Any?) {
+    let controller = projects ?? ProjectsWindowController(app: self)
+
+    projects = controller
+    controller.showWindow(sender)
+
+    Task {
+      do {
+        try await workspace.reload()
+      } catch {
+        log.error("Could not scan the Claude projects: \(error.localizedDescription)")
+      }
+    }
   }
 
   func closed(_ controller: ConversationController) {

@@ -1,0 +1,416 @@
+import AppKit
+import ClaudeEngine
+import ClaudeWorkspace
+
+/// The outline's columns, in their default order. The raw value is the column identifier and its sort key.
+enum ProjectsColumn: String, CaseIterable {
+  case title, status, tasks, changes, context, location, updated
+
+  var heading: String { ["Name", "Activity", "Tasks", "Changes", "Context", "Location", "Updated"][Self.allCases.firstIndex(of: self) ?? 0] }
+  var identifier: NSUserInterfaceItemIdentifier { NSUserInterfaceItemIdentifier(rawValue) }
+}
+
+/// Pinned, or a project, as an outline item. The window keeps one per id so the outline sees the same object across reloads.
+final class GroupItem {
+  let id: String
+  var project: Project?
+  var sessions: [Session] = []
+
+  init(id: String) {
+    self.id = id
+  }
+}
+
+/// Return opens the selection and Space shows the selected row's request.
+final class ProjectsOutlineView: NSOutlineView {
+  var onReturn: () -> Void = {}
+  var onSpace: () -> Bool = { false }
+
+  override func keyDown(with event: NSEvent) {
+    // Return and Enter.
+    if event.keyCode == 36 || event.keyCode == 76 { return onReturn() }
+
+    if event.charactersIgnoringModifiers == " ", event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty, onSpace() { return }
+
+    super.keyDown(with: event)
+  }
+}
+
+/// Every session in every project, grouped by project with Pinned on top, and the one place to answer a request without opening its conversation.
+final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSPopoverDelegate {
+  unowned let app: AppDelegate
+  let outline = ProjectsOutlineView()
+  var query = ProjectsQuery()
+  /// The top level as shown.
+  private(set) var groups: [GroupItem] = []
+  private var groupItems: [String: GroupItem] = [:]
+  /// Ids of the groups the user collapsed. Every other group opens expanded.
+  private var collapsed = Set(UserDefaults.standard.stringArray(forKey: "ProjectsCollapsed") ?? [])
+  private var isReloading = false
+  private(set) var popover: NSPopover?
+  /// The session whose request the popover shows.
+  private weak var peeked: Session?
+  private var ticker: Timer?
+  let filter = NSSegmentedControl()
+  let newItem = NSMenuToolbarItem(itemIdentifier: .newSession)
+  let denyItem = NSToolbarItem(itemIdentifier: NSToolbarItem.Identifier("deny"))
+  let allowItem = NSToolbarItem(itemIdentifier: NSToolbarItem.Identifier("allow"))
+  let searchItem = NSSearchToolbarItem(itemIdentifier: .search)
+
+  var workspace: Workspace { app.workspace }
+  var selectedItems: [Any] { outline.selectedRowIndexes.compactMap { outline.item(atRow: $0) } }
+  var selectedSessions: [Session] { selectedItems.compactMap { $0 as? Session } }
+
+  init(app: AppDelegate) {
+    self.app = app
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1160, height: 660), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+    super.init(window: window)
+
+    window.title = "Projects"
+    window.isReleasedWhenClosed = false
+    window.isRestorable = false
+    window.contentMinSize = NSSize(width: 640, height: 280)
+    window.toolbarStyle = .unified
+    window.delegate = self
+    window.center()
+    window.setFrameAutosaveName("Projects")
+
+    let scroll = NSScrollView()
+    scroll.documentView = outline
+    scroll.hasVerticalScroller = true
+    scroll.autohidesScrollers = true
+    window.contentView = scroll
+    window.initialFirstResponder = outline
+
+    makeOutline()
+    makeToolbar()
+    keepCurrent(self) { $0.refresh() }
+    ticker = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.reconfigureVisible() } }
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("ProjectsWindowController is built in code") }
+
+  private func makeOutline() {
+    for column in ProjectsColumn.allCases {
+      let tableColumn = NSTableColumn(identifier: column.identifier)
+      let widths: [ProjectsColumn: (CGFloat, CGFloat)] = [.title: (200, 300), .status: (200, 320), .tasks: (70, 86), .changes: (60, 80), .context: (50, 60), .location: (90, 150), .updated: (70, 90)]
+
+      tableColumn.title = column.heading
+      tableColumn.minWidth = widths[column]?.0 ?? 60
+      tableColumn.width = widths[column]?.1 ?? 80
+      tableColumn.resizingMask = column == .title || column == .status ? [.autoresizingMask, .userResizingMask] : .userResizingMask
+      // The status sort puts what needs you first; Updated puts the newest first.
+      tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: column.rawValue, ascending: column != .updated && column != .changes && column != .context && column != .tasks)
+      tableColumn.isHidden = column == .context
+      outline.addTableColumn(tableColumn)
+    }
+
+    outline.outlineTableColumn = outline.tableColumns.first
+    outline.style = .inset
+    outline.usesAlternatingRowBackgroundColors = true
+    outline.rowHeight = 26
+    outline.allowsMultipleSelection = true
+    outline.allowsColumnReordering = true
+    outline.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+    outline.autosaveName = "ProjectsColumns"
+    outline.autosaveTableColumns = true
+    outline.sortDescriptors = query.sortOrder
+    outline.dataSource = self
+    outline.delegate = self
+    outline.target = self
+    outline.doubleAction = #selector(openClicked(_:))
+    outline.onReturn = { [unowned self] in openSession(nil) }
+    outline.onSpace = { [unowned self] in
+      guard selectedSessions.count == 1, selectedItems.count == 1, selectedSessions[0].request != nil else { return false }
+
+      peek(selectedSessions[0])
+      return true
+    }
+    outline.setAccessibilityLabel("Sessions")
+
+    let rowMenu = NSMenu()
+    rowMenu.delegate = self
+    outline.menu = rowMenu
+
+    let columnMenu = NSMenu()
+    columnMenu.delegate = self
+    outline.headerView?.menu = columnMenu
+  }
+
+  // MARK: Refresh
+
+  /// Rebuilds the outline when its rows changed and otherwise updates the cells on screen. Runs again whenever anything it read changes.
+  func refresh() {
+    let shown = query.groups(workspace.projects)
+    let unchanged = shown.map(\.id) == groups.map(\.id) && zip(shown, groups).allSatisfy { new, old in new.sessions.map(ObjectIdentifier.init) == old.sessions.map(ObjectIdentifier.init) }
+
+    window?.subtitle = tally(workspace.projects.flatMap(\.sessions).map(\.rowStatus))
+
+    if unchanged {
+      reconfigureVisible()
+    } else {
+      groups = shown.map { group in
+        let item = groupItems[group.id] ?? GroupItem(id: group.id)
+        item.project = group.project
+        item.sessions = group.sessions
+        groupItems[group.id] = item
+        return item
+      }
+      reload()
+    }
+
+    updateToolbar()
+
+    // The request was answered here, in its conversation, or withdrawn.
+    if let detail = popover?.contentViewController as? RequestDetailController, peeked?.request?.requestId != detail.request.requestId { popover?.close() }
+  }
+
+  /// Reloads the rows, keeping the selection on the same items and each group open or closed as the user left it.
+  private func reload() {
+    let selected = Set(selectedItems.map { ObjectIdentifier($0 as AnyObject) })
+
+    isReloading = true
+    outline.reloadData()
+
+    for group in groups {
+      if collapsed.contains(group.id) {
+        outline.collapseItem(group)
+      } else {
+        outline.expandItem(group)
+      }
+    }
+
+    isReloading = false
+
+    let rows = (0..<outline.numberOfRows).filter { row in outline.item(atRow: row).map { selected.contains(ObjectIdentifier($0 as AnyObject)) } ?? false }
+    outline.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
+  }
+
+  /// Puts each on-screen cell's current values in it, keeping the views, so a popover's anchor and a pressed button survive.
+  func reconfigureVisible() {
+    let rows = outline.rows(in: outline.visibleRect)
+
+    for row in rows.lowerBound..<rows.upperBound {
+      guard let item = outline.item(atRow: row) else { continue }
+
+      for (index, column) in outline.tableColumns.enumerated() where !column.isHidden {
+        guard let view = outline.view(atColumn: index, row: row, makeIfNecessary: false), let kind = ProjectsColumn(rawValue: column.identifier.rawValue) else { continue }
+
+        configure(view, kind, item)
+      }
+    }
+  }
+
+  private func configure(_ view: NSView, _ column: ProjectsColumn, _ item: Any) {
+    if let group = item as? GroupItem { return configure(view, column, group) }
+
+    guard let session = item as? Session else { return }
+
+    switch column {
+    case .title:
+      (view as? NameCellView)?.show(title: session.rowTitle, status: session.rowStatus, isDimmed: session.isArchived)
+    case .status:
+      (view as? ActivityCellView)?.show(activity(of: session), request: session.request)
+    case .tasks:
+      (view as? TaskCellView)?.show(done: session.tasksDone, total: session.tasksTotal)
+    case .changes:
+      (view as? ChangesCellView)?.show(added: session.linesAdded, removed: session.linesRemoved, counts: !session.transcript.changedFiles.isEmpty)
+    case .context:
+      (view as? NSTableCellView)?.textField?.stringValue = session.contextFraction.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? ""
+    case .location:
+      // A pinned session is listed outside its project, so its location names the project.
+      let location = session.isPinned ? [session.project?.name ?? "", session.location].filter { !$0.isEmpty }.joined(separator: " · ") : session.location
+      (view as? NSTableCellView)?.textField?.stringValue = location
+      (view as? NSTableCellView)?.textField?.toolTip = session.workingDirectory.path
+    case .updated:
+      (view as? NSTableCellView)?.textField?.stringValue = updatedText(session.lastActive, now: .now)
+    }
+  }
+
+  private func configure(_ view: NSView, _ column: ProjectsColumn, _ group: GroupItem) {
+    switch column {
+    case .title:
+      (view as? NameCellView)?.show(title: group.project?.name ?? "Pinned", symbol: group.project == nil ? "pin" : "folder")
+    case .status:
+      (view as? ActivityCellView)?.show(tally(group.sessions.map(\.rowStatus)), request: nil)
+    case .tasks:
+      (view as? TaskCellView)?.show(done: 0, total: 0)
+    case .changes:
+      (view as? ChangesCellView)?.show(added: 0, removed: 0, counts: false)
+    case .location:
+      let path = group.project.map { ($0.path.path as NSString).abbreviatingWithTildeInPath } ?? ""
+      (view as? NSTableCellView)?.textField?.stringValue = path
+      (view as? NSTableCellView)?.textField?.toolTip = path
+    case .context, .updated:
+      (view as? NSTableCellView)?.textField?.stringValue = ""
+    }
+  }
+
+  /// The request a waiting session asks, what a running one is doing, why a failed one stopped.
+  private func activity(of session: Session) -> String {
+    if let request = session.request {
+      if RequestKind(request) == .question { return request.questions.first?.question ?? "Asking a question" }
+
+      return PermissionPrompt(request, projectName: session.project?.name ?? "").title
+    }
+
+    guard let live = session.live else { return "" }
+
+    switch session.rowStatus {
+    case .waiting:
+      return "Waiting for approval"
+    case .running:
+      return activityLine(summary: live.activity, isWaiting: false, transcript: session.transcript)
+    case .failed:
+      if let failure = live.exit?.failure { return failure }
+
+      if let code = live.exit?.code, code != 0 { return "Exited with code \(code)" }
+
+      return "The last turn failed"
+    default:
+      return ""
+    }
+  }
+
+  // MARK: Outline
+
+  func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+    guard let item else { return groups.count }
+
+    return (item as? GroupItem)?.sessions.count ?? 0
+  }
+
+  func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+    guard let group = item as? GroupItem else { return groups[index] }
+
+    return group.sessions[index]
+  }
+
+  func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+    (item as? GroupItem).map { !$0.sessions.isEmpty } ?? false
+  }
+
+  func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+    guard let tableColumn, let column = ProjectsColumn(rawValue: tableColumn.identifier.rawValue) else { return nil }
+
+    let view = outlineView.makeView(withIdentifier: tableColumn.identifier, owner: self) ?? makeCell(column)
+    configure(view, column, item)
+    return view
+  }
+
+  private func makeCell(_ column: ProjectsColumn) -> NSView {
+    let cell: NSView
+
+    switch column {
+    case .title: cell = NameCellView()
+    case .status: cell = ActivityCellView()
+    case .tasks: cell = TaskCellView()
+    case .changes: cell = ChangesCellView()
+    case .context: cell = TextCellView(alignment: .right)
+    case .location: cell = TextCellView(truncation: .byTruncatingMiddle)
+    case .updated: cell = TextCellView()
+    }
+
+    cell.identifier = column.identifier
+    return cell
+  }
+
+  func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
+    guard tableColumn?.identifier == ProjectsColumn.title.identifier else { return nil }
+
+    return (item as? Session)?.rowTitle ?? (item as? GroupItem)?.project?.name
+  }
+
+  func outlineView(_ outlineView: NSOutlineView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+    query.sortOrder = outlineView.sortDescriptors
+    refresh()
+  }
+
+  func outlineViewSelectionDidChange(_ notification: Notification) {
+    updateToolbar()
+  }
+
+  func outlineViewItemDidExpand(_ notification: Notification) {
+    remember(notification, collapsed: false)
+  }
+
+  func outlineViewItemDidCollapse(_ notification: Notification) {
+    remember(notification, collapsed: true)
+  }
+
+  private func remember(_ notification: Notification, collapsed isCollapsed: Bool) {
+    guard !isReloading, let group = notification.userInfo?["NSObject"] as? GroupItem else { return }
+
+    if isCollapsed {
+      collapsed.insert(group.id)
+    } else {
+      collapsed.remove(group.id)
+    }
+
+    UserDefaults.standard.set(Array(collapsed).sorted(), forKey: "ProjectsCollapsed")
+  }
+
+  // MARK: Request popover
+
+  /// Shows the session's open request in a popover on its row.
+  func peek(_ session: Session) {
+    guard let request = session.request else { return }
+
+    let row = outline.row(forItem: session)
+    guard row >= 0 else { return }
+
+    popover?.close()
+    outline.scrollRowToVisible(row)
+
+    guard let rowView = outline.rowView(atRow: row, makeIfNecessary: true) else { return }
+
+    let column = outline.column(withIdentifier: ProjectsColumn.status.identifier)
+    let shown = column >= 0 && !outline.tableColumns[column].isHidden ? column : 0
+    let anchor = outline.convert(outline.frameOfCell(atColumn: shown, row: row), to: rowView)
+    let detail = RequestDetailController(request: request, projectName: session.project?.name ?? "") { [weak self, weak session] decision in
+      session?.live?.respond(to: request, with: decision)
+      self?.popover?.close()
+    }
+    let popover = NSPopover()
+
+    popover.behavior = .transient
+    popover.contentViewController = detail
+    popover.delegate = self
+    popover.show(relativeTo: anchor, of: rowView, preferredEdge: .maxY)
+    self.popover = popover
+    peeked = session
+  }
+
+  func popoverDidClose(_ notification: Notification) {
+    guard notification.object as? NSPopover === popover else { return }
+
+    popover = nil
+    peeked = nil
+  }
+
+  /// Esc closes the request popover without answering it.
+  override func cancelOperation(_ sender: Any?) {
+    popover?.close()
+  }
+
+  // MARK: Window
+
+  func windowWillClose(_ notification: Notification) {
+    popover?.close()
+    UserDefaults.standard.set(false, forKey: "ProjectsOpen")
+  }
+
+  override func showWindow(_ sender: Any?) {
+    super.showWindow(sender)
+    UserDefaults.standard.set(true, forKey: "ProjectsOpen")
+  }
+
+  func windowDidBecomeMain(_ notification: Notification) {
+    reconfigureVisible()
+  }
+
+  func windowDidResignMain(_ notification: Notification) {
+    reconfigureVisible()
+  }
+}

@@ -10,7 +10,9 @@ final class SessionMenuDelegate: NSObject, NSMenuDelegate {
   func menuNeedsUpdate(_ menu: NSMenu) {
     // With a popover open the key window is the popover's, and the conversation is the main window.
     // An inactive app has neither, and accessibility clients still open its menus, so the frontmost conversation answers.
-    let windows = [NSApp.keyWindow, NSApp.mainWindow].compactMap(\.self) + NSApp.orderedWindows
+    // With the Projects window in front there is no conversation to pick for.
+    let front = [NSApp.keyWindow, NSApp.mainWindow].compactMap(\.self)
+    let windows = front.isEmpty ? NSApp.orderedWindows : front
     let conversation = windows.lazy.compactMap { $0.windowController as? ConversationController }.first
 
     for item in menu.items {
@@ -107,6 +109,13 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
       item("Show Changes", #selector(ConversationController.showChanges(_:)), "c", [.command, .control]),
       item("Show Verbose Transcript", #selector(ConversationController.toggleVerboseTranscript(_:))),
       .separator(),
+      item("Show Archived Sessions", #selector(ProjectsWindowController.toggleArchivedSessions(_:))),
+      menu("Filter", (["All Sessions"] + RowStatus.allCases.map(\.title)).enumerated().map { index, title in
+        let filter = item(title, #selector(ProjectsWindowController.filterSessions(_:)))
+        filter.tag = index
+        return filter
+      }),
+      .separator(),
       item("Show Tab Bar", #selector(NSWindow.toggleTabBar(_:))),
       item("Show All Tabs", #selector(NSWindow.toggleTabOverview(_:)), "\\", [.command, .shift]),
       .separator(),
@@ -120,6 +129,12 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
   session.items = [
     item("Allow", #selector(ConversationController.allowRequest(_:)), "\r"),
     item("Deny", #selector(ConversationController.denyRequest(_:)), "d"),
+    item("Show Request", #selector(ProjectsWindowController.showRequest(_:)), "y"),
+    .separator(),
+    item("Open", #selector(ProjectsWindowController.openSession(_:))),
+    item("Pin", #selector(ProjectsWindowController.togglePinned(_:))),
+    item("Rename…", #selector(ProjectsWindowController.renameSession(_:))),
+    item("Archive", #selector(ProjectsWindowController.toggleArchived(_:))),
     .separator(),
     item("Stop", #selector(ConversationController.stopSession(_:)), "."),
     .separator(),
@@ -132,6 +147,8 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
   window.items = [
     item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
     item("Zoom", #selector(NSWindow.performZoom(_:))),
+    .separator(),
+    item("Projects", #selector(AppDelegate.showProjects(_:)), "0", [.command, .shift]),
     .separator(),
     item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)))
   ]
