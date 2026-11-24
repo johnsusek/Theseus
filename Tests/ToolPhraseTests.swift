@@ -12,7 +12,9 @@ struct ToolPhraseTests {
   @Test func targetsAreFileNamesCommandsAndPatterns() {
     #expect(toolTarget("Read", input: ["file_path": "/tmp/Sources/TerminalView.swift"]) == "TerminalView.swift")
     #expect(toolTarget("NotebookEdit", input: ["notebook_path": "/tmp/a.ipynb"]) == "a.ipynb")
-    #expect(toolTarget("Bash", input: ["command": "swift test --filter X\necho done"]) == "swift test --filter X \u{2026}")
+    #expect(toolTarget("Bash", input: ["command": "swift test --filter X\necho done"]) == "swift\u{2026}")
+    #expect(toolTarget("Bash", input: ["command": "cd /tmp/a b && cd c && python3 - <<'EOF'"]) == "python3\u{2026}")
+    #expect(toolTarget("Bash", input: ["command": "ls"]) == "ls")
     #expect(toolTarget("Grep", input: ["pattern": "TODO"]) == "TODO")
     #expect(toolTarget("WebFetch", input: ["url": "https://example.com/docs/page"]) == "example.com")
     #expect(toolTarget("TaskUpdate", input: ["taskId": "1"]) == "")
@@ -27,8 +29,8 @@ struct ToolPhraseTests {
   }
 
   @Test func summaryCountsEachKindOfCall() {
-    #expect(toolSummary([("Read", "a.swift"), ("Read", "b.swift"), ("Bash", "swift test")]) == "Read 2 files, ran a command")
-    #expect(toolSummary([("Edit", "a.swift"), ("Grep", "TODO"), ("Glob", "*.swift"), ("MultiEdit", "b.swift")]) == "Made 2 edits, ran 2 searches")
-    #expect(toolSummary([("Write", "notes.md"), ("mcp__SafariPilot__click", "")]) == "Created notes.md, used SafariPilot click")
+    #expect(toolSummary([("Read", "a.swift"), ("Read", "b.swift"), ("Bash", "swift test")]).map(\.text).joined() == "Read 2 files, ran a command")
+    #expect(toolSummary([("Edit", "a.swift"), ("Grep", "TODO"), ("Glob", "*.swift"), ("MultiEdit", "b.swift")]).map(\.text).joined() == "Made 2 edits, ran 2 searches")
+    #expect(toolSummary([("Write", "notes.md"), ("mcp__SafariPilot__click", "")]) == [SummaryPart(text: "Created "), SummaryPart(text: "notes.md", isTarget: true), SummaryPart(text: ", used SafariPilot click")])
   }
 }

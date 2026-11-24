@@ -25,7 +25,7 @@ struct TranscriptBuilderTests {
     ])
 
     #expect(shapes(transcript) == [
-      "prompt(Add dates)", "reply(Reading first.)", "group(Read 2 files, ran a command)", "tool(Ran swift build)", "tool(Edited A.swift)", "reply(Done.)", "footer(1m 52s)"
+      "prompt(Add dates)", "reply(Reading first.)", "group(Read 2 files, ran a command)", "tool(Ran a command)", "tool(Edited A.swift)", "reply(Done.)", "footer(1m 52s)"
     ])
   }
 
@@ -38,6 +38,10 @@ struct TranscriptBuilderTests {
 
     #expect(open == ["prompt(Add a preview)", "reply(Added the preview.)", "next(Preview added. | Commit it? [\"Commit\", \"Not yet\"])", "footer(1m 52s)"])
     #expect(answered.contains("next(Preview added.)"))
+
+    let desktop: JSONValue = ["recap": "Done.", "ask": "Commit?", "actions": [["label": "Commit", "action": "commit"]]]
+    let desktopFrames = [prompt("Go"), call("t1", "mcp__ccd_turn__update_plan", ["items": []]), returned("t1", "ok"), call("t2", "mcp__ccd_turn__wrap_up", desktop), returned("t2", "ok"), finished()]
+    #expect(shapes(try transcript(desktopFrames)) == ["prompt(Go)", "next(Done. | Commit? [\"Commit\"])", "footer(1m 52s)"])
   }
 
   @Test func onlyTheLastTurnKeepsItsQuestionOpen() throws {
@@ -93,7 +97,7 @@ struct TranscriptBuilderTests {
     }
 
     #expect(rows.map(\.state) == [.completed, .failed, .waiting, .failed, .failed])
-    #expect(rows.map(\.verb) == ["Edited", "Ran", "Running", "Could not create", "Could not edit"])
+    #expect(rows.map(\.verb) == ["Edited", "Ran a command", "Running", "Could not create", "Could not edit"])
     #expect(rows.map(\.note) == ["", "", "", "Denied", ""])
     #expect(rows[0].added == 2 && rows[0].removed == 1)
     #expect(rows[0].copy == CopySource(title: "Copy Path", text: "/tmp/A.swift"))
@@ -112,7 +116,7 @@ struct TranscriptBuilderTests {
     builder.toggle("t2")
     let elements = builder.elements(for: TranscriptInput(transcript: transcript))
 
-    #expect(elements.map(\.shape) == ["prompt(Go)", "group(Read A.swift, ran a command)", "tool(Read A.swift)", "tool(Ran swift test)", "detail"])
+    #expect(elements.map(\.shape) == ["prompt(Go)", "group(Read A.swift, ran a command)", "tool(Read A.swift)", "tool(Ran swift\u{2026})", "detail"])
     #expect(elements.map(\.box) == [nil, nil, BoxSlot(isFirst: true), BoxSlot(), BoxSlot(isLast: true)])
     #expect(elements[4].kind == .detail([.command("$ swift test"), .output("6 tests passed")]))
 
@@ -191,9 +195,9 @@ struct TranscriptBuilderTests {
     let pending = [PendingRequest(requestId: "r1", toolUseId: "t1"), PendingRequest(requestId: "r2", toolUseId: "from-a-subagent")]
 
     #expect(builder.elements(for: TranscriptInput(transcript: transcript, pending: pending, isLive: true)).map(\.shape) == [
-      "prompt(Go)", "tool(Running rm -rf build)", "permission(r1)", "tool(Reading a)", "permission(r2)"
+      "prompt(Go)", "tool(Running rm\u{2026})", "permission(r1)", "tool(Reading a)", "permission(r2)"
     ])
-    #expect(builder.elements(for: TranscriptInput(transcript: transcript, isLive: true)).map(\.shape) == ["prompt(Go)", "tool(Running rm -rf build)", "tool(Reading a)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: transcript, isLive: true)).map(\.shape) == ["prompt(Go)", "tool(Running rm\u{2026})", "tool(Reading a)"])
   }
 
   @Test func taskListFollowsTheRunningTurnsFirstBlock() throws {

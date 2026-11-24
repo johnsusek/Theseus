@@ -54,7 +54,7 @@ extension TranscriptElement {
     case .thought(let text): "thought(\(text))"
     case .activity(let text, _): "activity(\(text))"
     case .tool(let row): "tool(\([row.verb, row.target].filter { !$0.isEmpty }.joined(separator: " ")))"
-    case .group(let group): "group(\(group.summary))"
+    case .group(let group): "group(\(group.summary.map(\.text).joined()))"
     case .detail: "detail"
     case .tasks(let tasks): "tasks(\(tasks.count))"
     case .permission(let requestId): "permission(\(requestId))"

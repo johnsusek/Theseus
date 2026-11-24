@@ -54,7 +54,7 @@ struct MarkdownTests {
     #expect((attributes(of: "bold")[.font] as? NSFont)?.fontDescriptor.symbolicTraits.contains(.bold) == true)
     #expect((attributes(of: "italic")[.font] as? NSFont)?.fontDescriptor.symbolicTraits.contains(.italic) == true)
     #expect((attributes(of: "code")[.font] as? NSFont)?.isFixedPitch == true)
-    #expect(attributes(of: "code")[.backgroundColor] != nil)
+    #expect(attributes(of: "code")[.inlineCode] != nil)
     #expect(attributes(of: "gone")[.strikethroughStyle] as? Int == NSUnderlineStyle.single.rawValue)
     #expect(attributes(of: "link")[.link] as? URL == URL(string: "https://example.com"))
     #expect(attributes(of: "Plain")[.backgroundColor] == nil)

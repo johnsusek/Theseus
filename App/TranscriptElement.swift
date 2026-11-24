@@ -25,7 +25,7 @@ struct ToolRow: Equatable {
 /// A run of finished tool calls as one sentence.
 struct GroupRow: Equatable {
   var id: String
-  var summary: String
+  var summary: [SummaryPart]
   var added = 0
   var removed = 0
   var isExpanded = false
@@ -83,12 +83,16 @@ struct TranscriptElement: Equatable, Identifiable {
   let id: String
   var kind: Kind
   /// Points of space above.
-  var spacing = 12.0
+  var spacing = 18.0
   var box: BoxSlot?
 }
 
 /// The model's `wrap_up` call, which the transcript draws as a card under its turn instead of a tool row.
 let wrapUpToolName = "mcp__theseus__wrap_up"
+
+/// The desktop app's own turn tools, in sessions it ran: its `wrap_up` reads as a card like Theseus's, and its task list call has no row.
+private let wrapUpToolNames: Set = [wrapUpToolName, "mcp__ccd_turn__wrap_up"]
+private let unshownToolNames = wrapUpToolNames.union(["mcp__ccd_turn__update_plan"])
 
 /// A turn's recap, with a question and reply buttons while it is the last thing in the conversation.
 struct NextStep: Equatable {
@@ -101,7 +105,8 @@ struct NextStep: Equatable {
   init(input: JSONValue, isOpen: Bool) {
     recap = input["recap"]?.string ?? ""
     ask = input["ask"]?.string.flatMap { $0.allSatisfy(\.isWhitespace) ? nil : $0 }
-    actions = Array((input["actions"]?.array ?? []).compactMap(\.string).prefix(2))
+    // The desktop app's actions are objects with a label.
+    actions = Array((input["actions"]?.array ?? []).compactMap { $0.string ?? $0["label"]?.string }.prefix(2))
     self.isOpen = isOpen
   }
 }
@@ -300,7 +305,7 @@ struct TranscriptBuilder {
 
     let wrapUp = turn.items.reversed().lazy.compactMap { item -> ToolCall? in
       guard case .toolCall(let callId) = item.content else { return nil }
-      return context.transcript.toolCall(callId).flatMap { $0.name == wrapUpToolName ? $0 : nil }
+      return context.transcript.toolCall(callId).flatMap { wrapUpToolNames.contains($0.name) ? $0 : nil }
     }.first
 
     if let wrapUp {
@@ -342,7 +347,7 @@ struct TranscriptBuilder {
       case .thinking(let text):
         if isVerbose, !text.allSatisfy(\.isWhitespace) { entries.append(.thought(id: id, text: text)) }
       case .toolCall(let callId):
-        if let call = context.transcript.toolCall(callId), call.name != wrapUpToolName { entries.append(.tool(id: callId, name: call.name, input: call.input, call: call)) }
+        if let call = context.transcript.toolCall(callId), !unshownToolNames.contains(call.name) { entries.append(.tool(id: callId, name: call.name, input: call.input, call: call)) }
       case .prompt(let blocks, let origin):
         if !blocks.text.allSatisfy(\.isWhitespace) { entries.append(.prompt(id: id, text: blocks.text, origin: origin)) }
       }
@@ -356,9 +361,9 @@ struct TranscriptBuilder {
         if !text.allSatisfy(\.isWhitespace) { entries.append(.reply(id: id, text: text)) }
       case .thinking(let text):
         if isVerbose, !text.allSatisfy(\.isWhitespace) { entries.append(.thought(id: id, text: text)) }
-      case .toolUse(_, wrapUpToolName, _):
-        break
       case .toolUse(let callId, let name, let partialInput):
+        guard !unshownToolNames.contains(name) else { break }
+
         // The input JSON rarely parses before the block ends, and the row needs none of it to say what is running.
         entries.append(.tool(id: callId, name: name, input: (try? JSONValue(parsing: Data(partialInput.utf8))) ?? [:], call: nil))
       case .other:
@@ -411,7 +416,14 @@ struct TranscriptBuilder {
     case .prompt(let id, let text, let origin):
       built.elements.append(TranscriptElement(id: id, kind: promptKind(text, origin: origin)))
     case .tool(let id, let name, let input, let call):
-      let row = row(id: id, name: name, input: input, call: call, context: context)
+      var row = row(id: id, name: name, input: input, call: call, context: context)
+
+      // A finished command on its own reads as a summary; its text is in the tooltip and the detail.
+      if name == "Bash", row.verb == toolPhrase(for: name).past {
+        row.verb = "Ran a command"
+        row.target = ""
+      }
+
       built.elements.append(TranscriptElement(id: id, kind: .tool(row)))
 
       if context.agents[id] != nil { built.agentIds.append(id) }

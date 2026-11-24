@@ -1,9 +1,9 @@
 import AppKit
 
 struct MarkdownStyle: Hashable {
-  var font = NSFont.systemFont(ofSize: 14)
+  var font = NSFont.systemFont(ofSize: 15)
   var color = NSColor.labelColor
-  var lineSpacing = 5.0
+  var lineSpacing = 3.0
   /// Space kept clear on each side of every block.
   var left = 0.0
   var right = 0.0
@@ -365,9 +365,17 @@ enum Markdown {
 
       if intent.contains(.emphasized) { traits.insert(.italic) }
 
-      if intent.contains(.code) {
+      if intent.contains(.code), !text.isEmpty {
         attributes[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize - 1.5, weight: traits.contains(.bold) ? .semibold : .regular)
-        attributes[.backgroundColor] = NSColor.quaternarySystemFill
+        attributes[.inlineCode] = true
+
+        // Kerning after the character before the span and after its last character makes room for the chip's padding.
+        if result.length > 0, result.attribute(.inlineCode, at: result.length - 1, effectiveRange: nil) == nil { result.addAttribute(.kern, value: Decoration.chipPadding, range: NSRange(location: result.length - 1, length: 1)) }
+
+        let span = NSMutableAttributedString(string: text, attributes: attributes)
+        span.addAttribute(.kern, value: Decoration.chipPadding, range: NSRange(location: span.length - 1, length: 1))
+        result.append(span)
+        continue
       } else if traits != font.fontDescriptor.symbolicTraits {
         attributes[.font] = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: font.pointSize) ?? font
       }

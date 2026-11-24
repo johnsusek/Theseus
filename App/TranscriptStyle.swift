@@ -11,6 +11,8 @@ extension NSAttributedString.Key {
   static let bubbleWidth = NSAttributedString.Key("Theseus.bubbleWidth")
   /// On text laid out for the column's width, such as a table's rows, which is rendered again when the width changes.
   static let fitsColumn = NSAttributedString.Key("Theseus.fitsColumn")
+  /// On an inline code span, which the layout draws on a rounded chip.
+  static let inlineCode = NSAttributedString.Key("Theseus.inlineCode")
 }
 
 /// What the layout draws behind one paragraph: a slice of a bubble, code block or diff, a group's border, quote bars, a rule.
@@ -53,6 +55,8 @@ struct Decoration: Hashable, Sendable, Codable {
   static let bubbleInset = 14.0
   /// Rows and their detail sit this far inside a group's border.
   static let boxInset = 12.0
+  /// How far an inline code chip reaches past its text on each side.
+  static let chipPadding = 4.0
 
   var fill: Fill?
   /// The fill's left edge in the column, and how far its right edge stops short of the column's. A bubble starts at its text instead.
@@ -139,9 +143,9 @@ extension [Paragraph] {
 
 @MainActor
 enum TranscriptStyle {
-  static let font = NSFont.systemFont(ofSize: 14)
+  static let font = NSFont.systemFont(ofSize: 15)
   static let callout = NSFont.systemFont(ofSize: 12)
-  static let digits = NSFont.monospacedDigitSystemFont(ofSize: 14, weight: .regular)
+  static let digits = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .regular)
   static let calloutDigits = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
   static let code = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
   private static var symbols: [String: NSTextAttachment] = [:]

@@ -86,7 +86,7 @@ func toolTarget(_ name: String, input: JSONValue) -> String {
   if let path = toolPath(name, input: input) { return URL(filePath: path).lastPathComponent }
 
   switch name {
-  case "Bash": return oneLine(input["command"]?.string ?? "", limit: 80)
+  case "Bash": return commandName(input["command"]?.string ?? "")
   case "Grep", "Glob": return oneLine(input["pattern"]?.string ?? "", limit: 60)
   case "Agent", "Task": return oneLine(input["description"]?.string ?? "", limit: 80)
   case "WebFetch": return input["url"]?.string.flatMap { URL(string: $0)?.host() } ?? oneLine(input["url"]?.string ?? "", limit: 60)
@@ -95,6 +95,16 @@ func toolTarget(_ name: String, input: JSONValue) -> String {
   case "Skill": return input["skill"]?.string ?? ""
   default: return ""
   }
+}
+
+/// The program a command runs, past any leading `cd`, with an ellipsis when more follows: "python3\u{2026}".
+func commandName(_ command: String) -> String {
+  var rest = command.trimmingCharacters(in: .whitespacesAndNewlines)
+
+  while rest.hasPrefix("cd "), let range = rest.range(of: "&&") { rest = rest[range.upperBound...].trimmingCharacters(in: .whitespaces) }
+
+  let name = String(rest.prefix { !$0.isWhitespace && $0 != ";" })
+  return name.count < rest.count ? name + "\u{2026}" : name
 }
 
 /// A running call as a sentence: "Reading TerminalView.swift".
@@ -114,22 +124,36 @@ func oneLine(_ text: String, limit: Int) -> String {
   return "\(head)\u{2026}\(tail)"
 }
 
+/// One piece of a summary sentence. A target, such as a file name, is set apart from the words around it.
+struct SummaryPart: Equatable {
+  var text: String
+  var isTarget = false
+}
+
 /// A run of calls as one sentence: "Read 2 files, ran a command".
-func toolSummary(_ calls: [(name: String, target: String)]) -> String {
+func toolSummary(_ calls: [(name: String, target: String)]) -> [SummaryPart] {
   var phrases: [ToolPhrase] = []
+  var parts: [SummaryPart] = []
 
   for call in calls where !phrases.contains(toolPhrase(for: call.name)) { phrases.append(toolPhrase(for: call.name)) }
 
-  let parts = phrases.map { phrase in
+  for (index, phrase) in phrases.enumerated() {
     let matching = calls.filter { toolPhrase(for: $0.name) == phrase }
+    var text = matching.count > 1 ? String(format: phrase.many, matching.count) : phrase.one
 
-    if matching.count > 1 { return String(format: phrase.many, matching.count) }
+    if index == 0 { text = text.prefix(1).uppercased() + text.dropFirst() } else { text = ", " + text }
 
-    return phrase.one.replacingOccurrences(of: "%@", with: matching[0].target)
+    guard matching.count == 1, let range = text.range(of: "%@") else {
+      parts.append(SummaryPart(text: text))
+      continue
+    }
+
+    parts.append(SummaryPart(text: String(text[..<range.lowerBound])))
+    parts.append(SummaryPart(text: matching[0].target, isTarget: true))
+    parts.append(SummaryPart(text: String(text[range.upperBound...])))
   }
 
-  let sentence = parts.joined(separator: ", ")
-  return sentence.prefix(1).uppercased() + sentence.dropFirst()
+  return parts.filter { !$0.text.isEmpty }
 }
 
 /// A tool's input as indented JSON with its keys in a stable order. Empty for an input with no fields.

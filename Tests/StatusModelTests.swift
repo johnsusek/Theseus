@@ -67,10 +67,10 @@ struct StatusModelTests {
     let reading = try transcript([prompt("Go"), call("t1", "Read", ["file_path": "/tmp/a.swift"]), returned("t1", "ok"), call("t2", "Bash", ["command": "swift test"])])
 
     #expect(activityLine(summary: nil, isWaiting: false, transcript: idle) == "Thinking")
-    #expect(activityLine(summary: nil, isWaiting: false, transcript: reading) == "Running swift test")
+    #expect(activityLine(summary: nil, isWaiting: false, transcript: reading) == "Running swift\u{2026}")
     #expect(activityLine(summary: "Running the tests", isWaiting: false, transcript: reading) == "Running the tests")
     #expect(activityLine(summary: "Running the tests", isWaiting: true, transcript: reading) == "Waiting for approval")
-    #expect(activityLine(summary: "", isWaiting: false, transcript: reading) == "Running swift test")
+    #expect(activityLine(summary: "", isWaiting: false, transcript: reading) == "Running swift\u{2026}")
   }
 
   @Test func agentRowsPutRunningFirstAndSayWhatEachIsDoing() throws {

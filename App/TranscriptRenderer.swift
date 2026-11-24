@@ -78,7 +78,10 @@ struct TranscriptRenderer {
     case .tool(let row):
       return [toolRow(row, inset: inset)]
     case .group(let group):
-      let content = NSMutableAttributedString(string: group.summary, attributes: secondary)
+      let content = NSMutableAttributedString()
+
+      for part in group.summary { content.append(part.isTarget ? TranscriptStyle.text(part.text) : NSAttributedString(string: part.text, attributes: secondary)) }
+
       content.append(delta(added: group.added, removed: group.removed))
       content.append(chevron(isOpen: group.isExpanded))
       return [line(content, toggle: group.id)]
@@ -92,7 +95,7 @@ struct TranscriptRenderer {
   }
 
   private func line(_ content: NSAttributedString, indent: CGFloat = 0, toggle: String? = nil) -> Paragraph {
-    var base: [NSAttributedString.Key: Any] = [.paragraphStyle: TranscriptStyle.paragraph(indent: indent, tail: indent), .font: TranscriptStyle.font]
+    var base: [NSAttributedString.Key: Any] = [.paragraphStyle: TranscriptStyle.paragraph(indent: indent, tail: indent, lineSpacing: 3), .font: TranscriptStyle.font]
 
     if let toggle { base[.toggle] = toggle }
 

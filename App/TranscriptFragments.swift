@@ -11,16 +11,24 @@ final class TranscriptLayoutDelegate: NSObject, NSTextLayoutManagerDelegate {
   let state = DecorationState()
 
   func textLayoutManager(_ textLayoutManager: NSTextLayoutManager, textLayoutFragmentFor location: any NSTextLocation, in textElement: NSTextElement) -> NSTextLayoutFragment {
-    guard let text = (textElement as? NSTextParagraph)?.attributedString, text.length > 0, let decoration = (text.attribute(.decoration, at: 0, effectiveRange: nil) as? DecorationValue)?.decoration else {
-      return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
+    guard let text = (textElement as? NSTextParagraph)?.attributedString, text.length > 0 else { return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange) }
+
+    let decoration = (text.attribute(.decoration, at: 0, effectiveRange: nil) as? DecorationValue)?.decoration
+    var hasCode = false
+
+    text.enumerateAttribute(.inlineCode, in: NSRange(location: 0, length: text.length)) { value, _, stop in
+      hasCode = value != nil
+      stop.pointee = ObjCBool(hasCode)
     }
 
+    guard decoration != nil || hasCode else { return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange) }
+
     let style = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
-    return DecoratedFragment(textElement: textElement, decoration: decoration, headIndent: style?.headIndent ?? 0, appearance: state)
+    return DecoratedFragment(textElement: textElement, decoration: decoration ?? Decoration(), headIndent: style?.headIndent ?? 0, appearance: state)
   }
 }
 
-/// A paragraph with something drawn behind it: its slice of a bubble, code block or diff, a group's border, quote bars or a rule.
+/// A paragraph with something drawn behind it: its slice of a bubble, code block or diff, a group's border, quote bars, a rule, or inline code chips.
 /// Consecutive paragraphs of one block each draw a slice, and the slices meet at the fragments' shared edges.
 final class DecoratedFragment: NSTextLayoutFragment {
   private let decoration: Decoration
@@ -74,6 +82,8 @@ final class DecoratedFragment: NSTextLayoutFragment {
       }
     }
 
+    drawChips(in: context)
+
     context.restoreGState()
     super.draw(at: point, in: context)
   }
@@ -113,6 +123,27 @@ final class DecoratedFragment: NSTextLayoutFragment {
     }
 
     context.restoreGState()
+  }
+
+  /// A rounded fill behind each inline code span, one per line the span reaches. The span's kerning leaves room for the padding.
+  private func drawChips(in context: CGContext) {
+    context.setFillColor(NSColor.quaternarySystemFill.cgColor)
+
+    for line in textLineFragments {
+      let string = line.attributedString
+      let bounds = line.typographicBounds
+
+      string.enumerateAttribute(.inlineCode, in: line.characterRange) { value, run, _ in
+        guard value != nil, let font = string.attribute(.font, at: run.location, effectiveRange: nil) as? NSFont else { return }
+
+        let start = line.locationForCharacter(at: run.location).x
+        let end = line.locationForCharacter(at: NSMaxRange(run)).x
+        let baseline = bounds.minY + line.glyphOrigin.y
+        let chip = CGRect(x: bounds.minX + start - Decoration.chipPadding, y: baseline - font.ascender - 1, width: end - start + Decoration.chipPadding, height: font.ascender - font.descender + 2)
+        context.addPath(CGPath(roundedRect: chip, cornerWidth: 4, cornerHeight: 4, transform: nil))
+        context.fillPath()
+      }
+    }
   }
 
   /// The border of an expanded group's list: the top and corners on its first paragraph, the sides on every one, the bottom on its last.
