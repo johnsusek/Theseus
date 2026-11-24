@@ -1,5 +1,6 @@
 import AppKit
 import ClaudeWorkspace
+import UserNotifications
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -23,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   /// Opening the Projects window scans the transcripts itself.
   func applicationDidFinishLaunching(_ notification: Notification) {
+    UNUserNotificationCenter.current().delegate = self
+
     if UserDefaults.standard.bool(forKey: "ProjectsOpen") { return showProjects(nil) }
 
     rescan()
@@ -179,4 +182,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   /// The menu has no shortcuts, so AppKit need not rebuild it to look for one on every key press.
   func menuHasKeyEquivalent(_ menu: NSMenu, for event: NSEvent, target: AutoreleasingUnsafeMutablePointer<AnyObject?>, action: UnsafeMutablePointer<Selector?>) -> Bool { false }
+}
+
+/// Notifications the model posts with the notify tool. Clicking one brings its conversation forward.
+extension AppDelegate: UNUserNotificationCenterDelegate {
+  nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+    let id = response.notification.request.content.userInfo["session"] as? String
+
+    await MainActor.run {
+      guard let id, let session = workspace.session(id) else { return }
+
+      NSApp.activate()
+      showConversation(session)
+    }
+  }
+
+  /// Shown while Theseus is active too, unless the conversation it is about is the key window.
+  nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+    let id = notification.request.content.userInfo["session"] as? String
+
+    return await MainActor.run {
+      let isKey = id.flatMap { workspace.session($0) }.flatMap { conversation(for: $0)?.window?.isKeyWindow } == true
+      return isKey ? [] : [.banner, .sound]
+    }
+  }
 }

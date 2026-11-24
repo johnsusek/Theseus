@@ -43,6 +43,14 @@ struct PermissionPrompt: Equatable {
       title = fileExists ? "Replace \(file)?" : "Create \(file)?"
       symbol = "doc.badge.plus"
       body = .code((input["content"]?.string ?? "").trimmingCharacters(in: .newlines))
+    case "mcp__theseus__set_permission_mode":
+      let mode = input["mode"]?.string.map(PermissionMode.init(rawValue:))
+      title = "Switch to \(mode.map(modeName) ?? "another mode")?"
+      symbol = "lock.shield"
+      body = .text(input["reason"]?.string ?? "")
+      allowTitle = "Switch"
+      // A saved rule would let the model change its own permissions without asking again.
+      checkbox = nil
     case "Bash":
       title = "Run this command?"
       symbol = "terminal"

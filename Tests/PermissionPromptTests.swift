@@ -21,7 +21,17 @@ struct PermissionPromptTests {
     #expect(prompt("WebFetch", ["url": "https://example.com"], description: "Fetch example.com").body == .text("Fetch example.com"))
   }
 
-  @Test func planAsksForApproval() {
+  @Test func modeSwitchNamesTheModeAndOffersNoRule() {
+    let rule = PermissionUpdate.addRules([PermissionRule(toolName: "mcp__theseus__set_permission_mode", ruleContent: nil)], behavior: .allow, destination: .localSettings)
+    let switching = prompt("mcp__theseus__set_permission_mode", ["mode": "acceptEdits", "reason": "The next steps edit twelve files."], suggestions: [rule])
+
+    #expect(switching.title == "Switch to Accept Edits?")
+    #expect(switching.body == .text("The next steps edit twelve files."))
+    #expect(switching.allowTitle == "Switch")
+    #expect(switching.checkbox == nil)
+  }
+
+    @Test func planAsksForApproval() {
     let plan = prompt("ExitPlanMode", ["plan": "1. Do it"])
 
     #expect(plan.body == .markdown("1. Do it"))
