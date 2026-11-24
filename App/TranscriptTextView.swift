@@ -39,8 +39,10 @@ final class TranscriptTextView: NSTextView {
     let hit = superview.flatMap { hitTest(convert(point, to: $0)) }
     var isText = false
 
-    if hit === self {
-      isText = toggleId(at: point) == nil && isGlyph(at: point)
+    if hit === self, attributes(at: point)?[.link] != nil {
+      return NSCursor.pointingHand.set()
+    } else if hit === self {
+      isText = toggleId(at: point) == nil && attributes(at: point).map { $0[.attachment] == nil } == true
     } else if let field = hit as? NSTextField {
       isText = field.isSelectable
     } else if let view = hit as? NSTextView {
@@ -95,14 +97,14 @@ final class TranscriptTextView: NSTextView {
     return text.attribute(.toggle, at: 0, effectiveRange: nil) as? String
   }
 
-  /// Whether `point` is over a line's glyphs, not its margins, an empty line or an attached view.
-  private func isGlyph(at point: NSPoint) -> Bool {
-    guard let hit = fragment(at: point), let line = hit.fragment.textLineFragments.first(where: { $0.typographicBounds.contains(hit.local) }) else { return false }
+  /// The attributes of the character under `point`, when it is over a line's glyphs rather than its margins or an empty line.
+  private func attributes(at point: NSPoint) -> [NSAttributedString.Key: Any]? {
+    guard let hit = fragment(at: point), let line = hit.fragment.textLineFragments.first(where: { $0.typographicBounds.contains(hit.local) }) else { return nil }
 
     let index = line.characterIndex(for: CGPoint(x: hit.local.x - line.typographicBounds.minX, y: hit.local.y - line.typographicBounds.minY))
-    guard index >= 0, index < line.attributedString.length else { return false }
+    guard index >= 0, index < line.attributedString.length else { return nil }
 
-    return line.attributedString.attribute(.attachment, at: index, effectiveRange: nil) == nil
+    return line.attributedString.attributes(at: index, effectiveRange: nil)
   }
 
   /// The character offset where the paragraph at `point` starts.

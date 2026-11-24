@@ -29,6 +29,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private var closingClick: (chip: NSView, event: Int)?
   /// How many of the session's issues are already in the log.
   private var loggedIssues = 0
+  private var preview: PreviewWindowController?
 
   private var frameName: String { "Project \(project.path)" }
   private var isBusy: Bool { session?.live.map { $0.state != .idle } ?? false }
@@ -64,6 +65,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.prompt.onSend = { [unowned self] in send() }
     content.prompt.onStop = { [unowned self] in stopSession(nil) }
     content.transcript.onDecision = { [unowned self] request, decision in session?.live?.respond(to: request, with: decision) }
+    content.transcript.onLink = { [unowned self] link in openLink(link) }
     content.status.agents.target = self
     content.status.agents.action = #selector(showAgents(_:))
     content.status.changes.target = self
@@ -528,8 +530,32 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   }
 
   /// A conversation that has run a turn keeps running without its tab. One that never sent a prompt is discarded.
+  /// A path link opens its file in the file's default app; web links open as usual.
+  private func openLink(_ link: Any) -> Bool {
+    guard let url = FilePaths.target(ofLink: link, in: session?.workingDirectory ?? project) else { return false }
+
+    if FileManager.default.fileExists(atPath: url.path) {
+      NSWorkspace.shared.open(url)
+    } else if let window {
+      let alert = NSAlert()
+      alert.messageText = "“\(url.lastPathComponent)” doesn’t exist."
+      alert.informativeText = url.path
+      alert.beginSheetModal(for: window)
+    }
+
+    return true
+  }
+
+    func showPreview(of url: URL) {
+    let controller = preview ?? PreviewWindowController()
+
+    preview = controller
+    controller.show(url)
+  }
+
   func windowWillClose(_ notification: Notification) {
     isClosed = true
+    preview?.close()
     app.closed(self)
 
     Task {

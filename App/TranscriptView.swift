@@ -7,6 +7,8 @@ final class TranscriptView: NSView {
   let textView = TranscriptTextView(usingTextLayoutManager: true)
   /// Answers a permission request from its card or from the Session menu.
   var onDecision: (PermissionRequest, PermissionDecision) -> Void = { _, _ in }
+  /// A click on a link. Returns false to let the text view open it as usual.
+  var onLink: (Any) -> Bool = { _ in false }
 
   /// Space kept clear under the last line, for the prompt field floating over the bottom edge.
   var bottomInset = 0.0 {
@@ -61,6 +63,7 @@ final class TranscriptView: NSView {
     textView.textContainer?.lineFragmentPadding = 0
     textView.textLayoutManager?.delegate = layoutDelegate
     textView.setAccessibilityLabel("Transcript")
+    textView.delegate = self
     textView.onToggle = { [unowned self] id in
       builder.toggle(id)
       update(keepsPosition: true)
@@ -319,4 +322,8 @@ final class TranscriptView: NSView {
 
     if isPinned { scrollToBottom() }
   }
+}
+
+extension TranscriptView: NSTextViewDelegate {
+  func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool { onLink(link) }
 }

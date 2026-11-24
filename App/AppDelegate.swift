@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   /// A headless check passes a workspace that runs a stand-in CLI and keeps its records elsewhere.
   init(workspace: Workspace = Workspace(recordsDirectory: URL.applicationSupportDirectory.appending(path: "Theseus"))) {
     self.workspace = workspace
+    super.init()
+    workspace.appendSystemPrompt = HostTools.prompt
+    workspace.hostServers = { [unowned self] session in HostTools.servers(for: session, app: self) }
   }
 
   func applicationWillFinishLaunching(_ notification: Notification) {
@@ -94,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   /// Brings the session's tab forward, or opens it as a new tab in its project's window.
   func showConversation(_ session: Session) {
-    if let open = conversations.first(where: { $0.session === session }) { return open.window?.makeKeyAndOrderFront(nil) ?? () }
+    if let open = conversation(for: session) { return open.window?.makeKeyAndOrderFront(nil) ?? () }
 
     let controller = ConversationController(app: self, project: session.project?.path ?? session.workingDirectory, session: session)
     conversations.append(controller)
@@ -116,6 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       }
     }
   }
+
+  func conversation(for session: Session) -> ConversationController? { conversations.first { $0.session === session } }
 
   func closed(_ controller: ConversationController) {
     conversations.removeAll { $0 === controller }

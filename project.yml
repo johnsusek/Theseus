@@ -65,6 +65,7 @@ targets:
     platform: macOS
     sources:
       - path: Tests
+      - path: App/FilePaths.swift
       - path: App/Log.swift
       - path: App/Markdown.swift
       - path: App/PermissionPrompt.swift
