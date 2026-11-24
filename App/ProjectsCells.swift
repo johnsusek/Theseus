@@ -120,6 +120,8 @@ final class ActivityCellView: NSTableCellView {
   private let answer = NSPopUpButton(frame: .zero, pullsDown: true)
   private let review = NSButton(title: "Review", target: nil, action: #selector(RowRequestActions.reviewRow(_:)))
   private let buttons = NSStackView()
+  /// The request whose options the pull-down lists. Its menu is rebuilt only for another request, so an open menu stays put.
+  private var listedRequest: String?
 
   init() {
     super.init(frame: .zero)
@@ -172,8 +174,9 @@ final class ActivityCellView: NSTableCellView {
     review.title = kind == .plan ? "Review" : "Answer…"
     review.toolTip = kind == .plan ? "Review the Plan (Command-Y)" : "Answer the Questions (Command-Y)"
 
-    guard picksOne, kind == .question else { return }
+    guard picksOne, kind == .question, request?.requestId != listedRequest else { return }
 
+    listedRequest = request?.requestId
     // The pull-down shows its first item as its title; the rest are the options.
     answer.menu?.items = [NSMenuItem(title: "Answer", action: nil, keyEquivalent: "")] + questions[0].options.map { option in
       let item = NSMenuItem(title: option.label, action: nil, keyEquivalent: "")

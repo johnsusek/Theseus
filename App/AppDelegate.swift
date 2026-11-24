@@ -21,9 +21,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     NSApp.mainMenu = makeMainMenu(recentProjects: self, sessionMenus: sessionMenus)
   }
 
+  /// Opening the Projects window scans the transcripts itself.
   func applicationDidFinishLaunching(_ notification: Notification) {
-    if UserDefaults.standard.bool(forKey: "ProjectsOpen") { showProjects(nil) }
+    if UserDefaults.standard.bool(forKey: "ProjectsOpen") { return showProjects(nil) }
 
+    rescan()
+  }
+
+  private func rescan() {
     Task {
       do {
         try await workspace.reload()
@@ -110,14 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     projects = controller
     controller.showWindow(sender)
-
-    Task {
-      do {
-        try await workspace.reload()
-      } catch {
-        log.error("Could not scan the Claude projects: \(error.localizedDescription)")
-      }
-    }
+    rescan()
   }
 
   func conversation(for session: Session) -> ConversationController? { conversations.first { $0.session === session } }

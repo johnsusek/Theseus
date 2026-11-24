@@ -15,6 +15,7 @@ struct ProjectsModelTests {
       project.sessions = sessions.map { entry in
         let session = Session(id: entry.id, workingDirectory: project.path, updatedAt: now.addingTimeInterval(-entry.minutes * 60))
         session.appTitle = entry.id
+        session.transcriptFile = project.path.appending(path: "\(entry.id).jsonl")
         session.project = project
         return session
       }
@@ -71,6 +72,16 @@ struct ProjectsModelTests {
     query.filter = nil
     query.sortOrder = [NSSortDescriptor(key: "title", ascending: false)]
     #expect(ids(query.groups(all)) == ["app: c b a"])
+  }
+
+  @Test func blankConversationsStayOut() throws {
+    let all = projects([("app", [("a", 1), ("b", 2)])])
+    let blank = all[0].sessions[1]
+    blank.transcriptFile = nil
+
+    #expect(ids(ProjectsQuery().groups(all)) == ["app: a"])
+    blank.transcript = try transcript([prompt("Go")])
+    #expect(ids(ProjectsQuery().groups(all)) == ["app: a b"])
   }
 
   @Test func rowTitleIsTheFirstLine() {

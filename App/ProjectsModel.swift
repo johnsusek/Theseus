@@ -138,8 +138,11 @@ struct ProjectsQuery {
 
   var isFiltered: Bool { filter != nil || !search.isEmpty }
 
+  /// A conversation that has written nothing and run no turn is an empty tab still starting, so it stays out of the list.
   @MainActor
   func shows(_ session: Session) -> Bool {
+    guard session.transcriptFile != nil || !session.transcript.turns.isEmpty else { return false }
+
     guard showsArchived || !session.isArchived else { return false }
 
     guard filter == nil || session.rowStatus == filter else { return false }

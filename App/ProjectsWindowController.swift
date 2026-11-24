@@ -21,14 +21,17 @@ final class GroupItem {
   }
 }
 
-/// Return opens the selection and Space shows the selected row's request.
+/// Return opens the selection, Space shows the selected row's request and Esc closes it.
 final class ProjectsOutlineView: NSOutlineView {
   var onReturn: () -> Void = {}
   var onSpace: () -> Bool = { false }
+  var onEscape: () -> Bool = { false }
 
   override func keyDown(with event: NSEvent) {
     // Return and Enter.
     if event.keyCode == 36 || event.keyCode == 76 { return onReturn() }
+
+    if event.keyCode == 53, onEscape() { return }
 
     if event.charactersIgnoringModifiers == " ", event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty, onSpace() { return }
 
@@ -47,6 +50,11 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
   /// Ids of the groups the user collapsed. Every other group opens expanded.
   private var collapsed = Set(UserDefaults.standard.stringArray(forKey: "ProjectsCollapsed") ?? [])
   private var isReloading = false
+  /// Menus open anywhere in the app. Rows wait to be rebuilt until none is, so an open menu keeps its control.
+  private var openMenus = 0
+  /// Counts the times the window started watching the workspace, so only the newest pass runs and a closed window's pass ends.
+  private var watching = 0
+  private var isWatching = false
   private(set) var popover: NSPopover?
   /// The session whose request the popover shows.
   private weak var peeked: Session?
@@ -84,8 +92,8 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
 
     makeOutline()
     makeToolbar()
-    keepCurrent(self) { $0.refresh() }
-    ticker = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.reconfigureVisible() } }
+    NotificationCenter.default.addObserver(self, selector: #selector(menuOpened(_:)), name: NSMenu.didBeginTrackingNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(menuClosed(_:)), name: NSMenu.didEndTrackingNotification, object: nil)
   }
 
   @available(*, unavailable)
@@ -121,6 +129,12 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
     outline.target = self
     outline.doubleAction = #selector(openClicked(_:))
     outline.onReturn = { [unowned self] in openSession(nil) }
+    outline.onEscape = { [unowned self] in
+      guard let popover else { return false }
+
+      popover.close()
+      return true
+    }
     outline.onSpace = { [unowned self] in
       guard selectedSessions.count == 1, selectedItems.count == 1, selectedSessions[0].request != nil else { return false }
 
@@ -140,6 +154,17 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
 
   // MARK: Refresh
 
+  /// Keeps the outline current while the window is open, and the Updated column's relative times with it.
+  func watch() {
+    watching += 1
+    isWatching = true
+    ticker?.invalidate()
+    ticker = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.reconfigureVisible() } }
+    keepCurrent(self) { [generation = watching] controller in
+      if controller.watching == generation { controller.refresh() }
+    }
+  }
+
   /// Rebuilds the outline when its rows changed and otherwise updates the cells on screen. Runs again whenever anything it read changes.
   func refresh() {
     let shown = query.groups(workspace.projects)
@@ -147,7 +172,8 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
 
     window?.subtitle = tally(workspace.projects.flatMap(\.sessions).map(\.rowStatus))
 
-    if unchanged {
+    // Rebuilding the rows would take the popover's anchor or an open menu's control away; they catch up when it closes.
+    if unchanged || popover != nil || openMenus > 0 {
       reconfigureVisible()
     } else {
       groups = shown.map { group in
@@ -387,21 +413,34 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
 
     popover = nil
     peeked = nil
+
+    if isWatching { refresh() }
   }
 
-  /// Esc closes the request popover without answering it.
-  override func cancelOperation(_ sender: Any?) {
-    popover?.close()
+  @objc private func menuOpened(_ notification: Notification) {
+    openMenus += 1
+  }
+
+  @objc private func menuClosed(_ notification: Notification) {
+    openMenus = max(openMenus - 1, 0)
+
+    if openMenus == 0, isWatching { refresh() }
   }
 
   // MARK: Window
 
   func windowWillClose(_ notification: Notification) {
     popover?.close()
+    watching += 1
+    isWatching = false
+    ticker?.invalidate()
+    ticker = nil
     UserDefaults.standard.set(false, forKey: "ProjectsOpen")
   }
 
   override func showWindow(_ sender: Any?) {
+    if window?.isVisible != true { watch() }
+
     super.showWindow(sender)
     UserDefaults.standard.set(true, forKey: "ProjectsOpen")
   }

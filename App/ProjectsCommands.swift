@@ -238,7 +238,8 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
     if menu === outline.menu { return fillRowMenu(menu) }
 
     if menu === outline.headerView?.menu {
-      menu.items = outline.tableColumns.dropFirst().map { column in
+      // Name holds the disclosure triangles, so it stays wherever it was dragged.
+      menu.items = outline.tableColumns.filter { $0 !== outline.outlineTableColumn }.map { column in
         let item = NSMenuItem(title: column.title, action: #selector(toggleColumn(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = column.identifier.rawValue
@@ -274,10 +275,15 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
       return item
     }
 
-    guard sessions.isEmpty, let project = (items.first as? GroupItem)?.project else {
-      menu.items = items.isEmpty ? [] : [entry("Open", #selector(openSession(_:))), .separator(), entry("Pin", #selector(togglePinned(_:))), entry("Rename…", #selector(renameSession(_:))), entry("Archive", #selector(toggleArchived(_:))), .separator(), entry("Stop", #selector(stopSession(_:)))]
+    menu.items = []
+
+    if !sessions.isEmpty {
+      menu.items = [entry("Open", #selector(openSession(_:))), .separator(), entry("Pin", #selector(togglePinned(_:))), entry("Rename…", #selector(renameSession(_:))), entry("Archive", #selector(toggleArchived(_:))), .separator(), entry("Stop", #selector(stopSession(_:)))]
       return
     }
+
+    // A project's row offers a new session in it; Pinned offers nothing.
+    guard let project = (items.first as? GroupItem)?.project else { return }
 
     let item = NSMenuItem(title: "New Session", action: #selector(newSessionIn(_:)), keyEquivalent: "")
     item.target = self
