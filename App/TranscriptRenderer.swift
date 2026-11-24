@@ -46,7 +46,7 @@ struct TranscriptRenderer {
   func permissionBody(_ body: PermissionPrompt.Body) -> NSAttributedString {
     switch body {
     case .diff(let lines):
-      diffLines(lines, inset: 0).joined(terminated: false)
+      diffLines(lines, language: nil, inset: 0).joined(terminated: false)
     case .code(let text):
       codeLines(text.components(separatedBy: "\n"), inset: 0, color: .labelColor).joined(terminated: false)
     case .markdown(let text):
@@ -87,10 +87,8 @@ struct TranscriptRenderer {
       return [line(content, toggle: group.id)]
     case .detail(let blocks):
       return detail(blocks, inset: inset)
-    case .tasks, .permission, .nextStep:
+    case .tasks, .permission, .nextStep, .footer:
       return [line(NSAttributedString(attachment: card(element)))]
-    case .footer(let text):
-      return [line(TranscriptStyle.text(text, font: TranscriptStyle.calloutDigits, color: .secondaryLabelColor))]
     }
   }
 
@@ -179,11 +177,17 @@ struct TranscriptRenderer {
 
       switch block {
       case .command(let text):
-        added = Markdown.codeLines(text, left: inset, right: inset, before: before)
+        added = Markdown.codeLines(text, language: "bash", left: inset, right: inset, before: before)
       case .output(let text):
         added = codeLines(text.components(separatedBy: "\n"), inset: inset, color: .labelColor)
-      case .diff(let lines):
-        added = diffLines(lines, inset: inset)
+      case .diff(let lines, let file):
+        added = diffLines(lines, language: file.flatMap(CodeHighlighter.language(ofFile:)), inset: inset)
+
+        // The file's name heads its patch, with the patch's usual gap under it.
+        if let file, !added.isEmpty {
+          added[0].restyle { $0.paragraphSpacingBefore += 8 }
+          added.insert(line(TranscriptStyle.text(file, font: NSFont.systemFont(ofSize: 13)), indent: inset), at: 0)
+        }
       case .report(let text):
         added = Markdown.paragraphs(text, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), color: .secondaryLabelColor, lineSpacing: 3, left: inset, right: inset, width: columnWidth))
       case .more(let id, let hidden):
@@ -214,7 +218,7 @@ struct TranscriptRenderer {
 
   /// Patch lines without their `+`, `-` or space. Added and removed lines get a tinted row with a bar at its leading edge.
   /// After a hunk header, or in a new file, each line follows its number in the file: the new number, or the old one for a removed line.
-  private func diffLines(_ lines: [String], inset: CGFloat) -> [Paragraph] {
+  private func diffLines(_ lines: [String], language: String?, inset: CGFloat) -> [Paragraph] {
     let fills: [Character: Decoration.Fill] = ["+": .added, "-": .removed]
     var rows: [(number: Int?, text: String, fill: Decoration.Fill?, isGap: Bool)] = []
     var next: (old: Int, new: Int)? = lines.allSatisfy { $0.hasPrefix("+") } ? (1, 1) : nil
@@ -248,6 +252,7 @@ struct TranscriptRenderer {
     let digits = rows.compactMap(\.number).max().map { String($0).count } ?? 0
     let gutter = digits == 0 ? 0 : ceil(TranscriptStyle.text(String(repeating: "0", count: digits), font: TranscriptStyle.code).size().width) + 12
     let start = inset + 10
+    let texts = CodeHighlighter.lines(rows.map(\.text), language: language, font: TranscriptStyle.code, color: .labelColor)
 
     return rows.enumerated().map { index, row in
       let style = TranscriptStyle.paragraph(indent: start + gutter, tail: inset + 4, lineSpacing: TranscriptStyle.codeLineSpacing)
@@ -260,7 +265,7 @@ struct TranscriptRenderer {
         content.append(TranscriptStyle.text("\t" + (row.number.map(String.init) ?? "") + "\t", font: TranscriptStyle.code, color: .tertiaryLabelColor))
       }
 
-      content.append(TranscriptStyle.text(row.text, font: TranscriptStyle.code, color: color))
+      content.append(row.isGap ? TranscriptStyle.text(row.text, font: TranscriptStyle.code, color: color) : texts[index])
       var base: [NSAttributedString.Key: Any] = [.paragraphStyle: style, .font: TranscriptStyle.code, .foregroundColor: color]
 
       if let fill = row.fill {

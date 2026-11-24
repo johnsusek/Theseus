@@ -298,6 +298,28 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
   // MARK: Commands
 
+  /// A shell code block's Run button: the code runs in a new Terminal window, in the session's folder.
+  @objc func runInTerminal(_ sender: CodeButtonsView) {
+    let directory = (session?.workingDirectory ?? project).path
+    let script = FileManager.default.temporaryDirectory.appending(path: "Theseus-\(UUID().uuidString.prefix(8)).command")
+    let quoted = "'" + directory.replacingOccurrences(of: "'", with: "'\\''") + "'"
+
+    do {
+      try "cd \(quoted)\n\(sender.code)\n".write(to: script, atomically: true, encoding: .utf8)
+      try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+    } catch {
+      return report(error, as: "Could not run the code in Terminal")
+    }
+
+    Task {
+      do {
+        try await NSWorkspace.shared.open([script], withApplicationAt: URL(filePath: "/System/Applications/Utilities/Terminal.app"), configuration: NSWorkspace.OpenConfiguration())
+      } catch {
+        report(error, as: "Could not run the code in Terminal")
+      }
+    }
+  }
+
   @objc func newConversation(_ sender: Any?) {
     app.openConversation(in: project)
   }

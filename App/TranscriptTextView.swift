@@ -6,6 +6,8 @@ final class TranscriptTextView: NSTextView {
   var onToggle: (String) -> Void = { _ in }
   /// The items for a right-click at a character offset. Empty gets the standard text menu.
   var contextItems: (Int) -> [NSMenuItem] = { _ in [] }
+  /// The character offset of the paragraph under the pointer, or nil once it leaves the text.
+  var onHover: (Int?) -> Void = { _ in }
 
   /// The tracking loop inside `super` returns at mouse up. A click that neither moved nor selected anything is a toggle,
   /// so dragging across a tool sentence still selects it.
@@ -22,7 +24,7 @@ final class TranscriptTextView: NSTextView {
     if hypot(end.x - start.x, end.y - start.y) < 3 { onToggle(toggle) }
   }
 
-  private lazy var pointerArea = NSTrackingArea(rect: .zero, options: [.mouseMoved, .cursorUpdate, .activeInActiveApp, .inVisibleRect], owner: self)
+  private lazy var pointerArea = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .activeInActiveApp, .inVisibleRect], owner: self)
 
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
@@ -34,8 +36,11 @@ final class TranscriptTextView: NSTextView {
 
   override func cursorUpdate(with event: NSEvent) { mouseMoved(with: event) }
 
+  override func mouseExited(with event: NSEvent) { onHover(nil) }
+
   override func mouseMoved(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
+    onHover(paragraphOffset(at: point))
     let hit = superview.flatMap { hitTest(convert(point, to: $0)) }
     var isText = false
 
@@ -79,7 +84,8 @@ final class TranscriptTextView: NSTextView {
     guard type == .string else { return super.writeSelection(to: pboard, type: type) }
 
     let text = selectedRanges.map { (string as NSString).substring(with: $0.rangeValue) }.joined(separator: "\n")
-    return pboard.setString(text.replacingOccurrences(of: "\u{FFFC}", with: "").replacingOccurrences(of: "\u{2028}", with: "\n"), forType: .string)
+    // A code block's buttons follow a tab at the end of its first line.
+    return pboard.setString(text.replacingOccurrences(of: "\t\u{FFFC}", with: "").replacingOccurrences(of: "\u{FFFC}", with: "").replacingOccurrences(of: "\u{2028}", with: "\n"), forType: .string)
   }
 
   private func fragment(at point: NSPoint) -> (fragment: NSTextLayoutFragment, local: CGPoint)? {

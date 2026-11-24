@@ -1,6 +1,6 @@
 import AppKit
 
-/// A turn's recap from the model's `wrap_up` call. While the question is open it also asks it, and each button sends its title as the reply.
+/// The last turn's recap from the model's `wrap_up` call, with its question, where each button sends its title as the reply.
 /// The buttons have no key equivalents, since Return belongs to the prompt field.
 final class NextStepCardView: NSView, CardContent {
   private static let padding = 12.0
@@ -15,8 +15,8 @@ final class NextStepCardView: NSView, CardContent {
 
   init(step: NextStep, reply: @escaping (String) -> Void) {
     recap = NSTextField(wrappingLabelWithString: step.recap)
-    ask = step.isOpen ? step.ask.map { NSTextField(wrappingLabelWithString: $0) } : nil
-    buttons = step.isOpen && step.ask != nil ? step.actions.reversed().map { NSButton(title: $0, target: nil, action: nil) } : []
+    ask = step.ask.map { NSTextField(wrappingLabelWithString: $0) }
+    buttons = step.ask != nil ? step.actions.reversed().map { NSButton(title: $0, target: nil, action: nil) } : []
     self.reply = reply
     super.init(frame: .zero)
 

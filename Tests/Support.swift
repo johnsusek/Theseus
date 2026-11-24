@@ -58,9 +58,9 @@ extension TranscriptElement {
     case .detail: "detail"
     case .tasks(let tasks): "tasks(\(tasks.count))"
     case .permission(let requestId): "permission(\(requestId))"
-    case .nextStep(let step): "next(\(step.recap)\(step.isOpen ? " | \(step.ask ?? "") \(step.actions)" : ""))"
+    case .nextStep(let step): "next(\(step.recap) | \(step.ask ?? "") \(step.actions))"
     // The date's wording follows the year the test runs in, so only the duration is compared here.
-    case .footer(let text): "footer(\(text.components(separatedBy: " \u{B7} ").last ?? ""))"
+    case .footer(let footer): "footer(\(footer.text.components(separatedBy: " \u{B7} ").last ?? ""))"
     }
   }
 }

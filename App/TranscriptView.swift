@@ -48,6 +48,8 @@ final class TranscriptView: NSView {
   private var isPinned = true
   private var isScrollingToBottom = false
   private var clipSize = NSSize.zero
+  /// The turn under the pointer, whose footer shows.
+  private var hoveredTurn: Int?
 
   private var isActive: Bool { layoutDelegate.state.isActive }
   private var isAtBottom: Bool { scrollView.contentView.bounds.maxY >= textView.frame.maxY + scrollView.contentInsets.bottom - 4 }
@@ -71,6 +73,7 @@ final class TranscriptView: NSView {
       update(keepsPosition: true)
     }
     textView.contextItems = { [unowned self] offset in contextItems(at: offset) }
+    textView.onHover = { [unowned self] offset in hover(offset.flatMap { text.element(at: $0)?.turn }) }
 
     renderer.card = { [unowned self] element in card(for: element) }
     renderer.mark = { [unowned self] mark in
@@ -219,6 +222,10 @@ final class TranscriptView: NSView {
     switch element.kind {
     case .tasks(let tasks):
       return ViewAttachment { TaskCardView(tasks: tasks) }
+    case .footer(let footer):
+      guard let turn = element.turn else { return NSTextAttachment() }
+
+      return ViewAttachment { [unowned self] in TurnFooterView(footer: footer, turn: turn, isShown: turn == hoveredTurn) }
     case .nextStep(let step):
       return ViewAttachment { [unowned self] in NextStepCardView(step: step) { [unowned self] in onReply($0) } }
     case .permission(let requestId):
@@ -236,6 +243,20 @@ final class TranscriptView: NSView {
     default:
       return NSTextAttachment()
     }
+  }
+
+  /// Shows the footer of the turn under the pointer and hides the rest.
+  private func hover(_ turn: Int?) {
+    guard turn != hoveredTurn else { return }
+
+    hoveredTurn = turn
+
+    for footer in views(TurnFooterView.self) { footer.animator().alphaValue = footer.turn == turn ? 1 : 0 }
+  }
+
+  /// The cards of one kind now in the text view.
+  private func views<Card: NSView>(_ kind: Card.Type, in view: NSView? = nil) -> [Card] {
+    (view ?? textView).subviews.flatMap { ($0 as? Card).map { [$0] } ?? views(kind, in: $0) }
   }
 
   private func answer(_ request: PermissionRequest, allow: Bool) {

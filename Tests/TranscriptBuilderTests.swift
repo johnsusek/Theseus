@@ -37,18 +37,18 @@ struct TranscriptBuilderTests {
     let answered = builder.elements(for: TranscriptInput(transcript: try transcript(frames), isLive: true, sent: [SentPrompt(uuid: "u", text: "Commit")])).map(\.shape)
 
     #expect(open == ["prompt(Add a preview)", "reply(Added the preview.)", "next(Preview added. | Commit it? [\"Commit\", \"Not yet\"])", "footer(1m 52s)"])
-    #expect(answered.contains("next(Preview added.)"))
+    #expect(!answered.contains { $0.hasPrefix("next(") })
 
     let desktop: JSONValue = ["recap": "Done.", "ask": "Commit?", "actions": [["label": "Commit", "action": "commit"]]]
     let desktopFrames = [prompt("Go"), call("t1", "mcp__ccd_turn__update_plan", ["items": []]), returned("t1", "ok"), call("t2", "mcp__ccd_turn__wrap_up", desktop), returned("t2", "ok"), finished()]
     #expect(shapes(try transcript(desktopFrames)) == ["prompt(Go)", "next(Done. | Commit? [\"Commit\"])", "footer(1m 52s)"])
   }
 
-  @Test func onlyTheLastTurnKeepsItsQuestionOpen() throws {
+  @Test func onlyTheLastTurnShowsItsRecap() throws {
     let wrapUp: JSONValue = ["recap": "Done.", "ask": "Push?", "actions": ["Push"]]
     let shown = shapes(try transcript([prompt("One"), call("t1", wrapUpToolName, wrapUp), returned("t1", "Shown."), finished(), prompt("Two", at: "10:05:00"), said("Ok."), finished()]))
 
-    #expect(shown.contains("next(Done.)"))
+    #expect(!shown.contains { $0.hasPrefix("next(") })
     #expect(!shown.contains { $0.hasPrefix("tool(") })
   }
 
@@ -59,7 +59,7 @@ struct TranscriptBuilderTests {
 
     guard case .footer(let text) = elements.last?.kind else { return #expect(Bool(false), "The footer is missing") }
 
-    #expect(text.hasSuffix(" \u{B7} Stopped"))
+    #expect(text.text.hasSuffix(" \u{B7} Stopped"))
   }
 
   @Test func sentPromptsShowAfterTheRunningTurn() throws {
@@ -73,10 +73,13 @@ struct TranscriptBuilderTests {
 
   @Test func footerGivesTheStartAndTheDuration() throws {
     var builder = makeBuilder()
-    let elements = builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go", at: "14:14:00"), said("Done."), finished()])))
+    let elements = builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go", at: "14:14:00"), said("Done."), said("Also this."), finished()])))
 
-    guard case .footer(let text) = elements.last?.kind else { return #expect(Bool(false), "The footer is missing") }
+    guard case .footer(let footer) = elements.last?.kind else { return #expect(Bool(false), "The footer is missing") }
 
+    let text = footer.text
+    #expect(footer.replies == "Done.\n\nAlso this.")
+    #expect(Set(elements.map(\.turn)) == [elements[0].turn] && elements[0].turn != nil)
     #expect(text.hasPrefix("Nov 20"))
     #expect(text.contains("2:14"))
     #expect(text.hasSuffix(" \u{B7} 1m 52s"))
@@ -143,8 +146,8 @@ struct TranscriptBuilderTests {
       }
     }
 
-    #expect(details()[0] == [.diff(["@@ -1,2 +1,3 @@", " keep", "-old", "+new", "+more"])])
-    #expect(details()[1] == [.diff(["+one", "+two"])])
+    #expect(details()[0] == [.diff(["@@ -1,2 +1,3 @@", " keep", "-old", "+new", "+more"], file: "A.swift")])
+    #expect(details()[1] == [.diff(["+one", "+two"], file: "B.swift")])
     #expect(details()[2] == [.command("$ seq 40"), .output((1...16).map { "line \($0)" }.joined(separator: "\n")), .more(id: "t3/more", hidden: 24)])
 
     builder.toggle("t3/more")

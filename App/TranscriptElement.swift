@@ -42,8 +42,8 @@ enum DetailBlock: Equatable {
   case command(String)
   /// Monospaced lines.
   case output(String)
-  /// Patch lines, each starting with a space, `+` or `-`.
-  case diff([String])
+  /// Patch lines, each starting with a space, `+` or `-`, under the name of the `file` they change and colored as its language.
+  case diff([String], file: String? = nil)
   /// Markdown, for an agent's report.
   case report(String)
   /// A line that shows the rest of a capped output when clicked.
@@ -77,14 +77,22 @@ struct TranscriptElement: Equatable, Identifiable {
     case tasks([TaskItem])
     case permission(requestId: String)
     case nextStep(NextStep)
-    case footer(String)
+    case footer(TurnFooter)
   }
 
   let id: String
   var kind: Kind
+  /// The turn the element belongs to. Sent prompts, the activity line and unplaced requests have none.
+  var turn: Int?
   /// Points of space above.
   var spacing = 18.0
   var box: BoxSlot?
+}
+
+/// Under a finished turn, shown while the pointer is over the turn: "2:14 PM · 1m 52s", and the turn's replies for its Copy button.
+struct TurnFooter: Equatable {
+  var text: String
+  var replies: String
 }
 
 /// The model's `wrap_up` call, which the transcript draws as a card under its turn instead of a tool row.
@@ -94,20 +102,17 @@ let wrapUpToolName = "mcp__theseus__wrap_up"
 private let wrapUpToolNames: Set = [wrapUpToolName, "mcp__ccd_turn__wrap_up"]
 private let unshownToolNames = wrapUpToolNames.union(["mcp__ccd_turn__update_plan"])
 
-/// A turn's recap, with a question and reply buttons while it is the last thing in the conversation.
+/// The last turn's recap, with a question and reply buttons. It goes away once anything is sent, as the desktop app's does.
 struct NextStep: Equatable {
   var recap: String
   var ask: String?
   var actions: [String]
-  /// Its turn is the last one and nothing has been sent since, so the question is still open.
-  var isOpen: Bool
 
-  init(input: JSONValue, isOpen: Bool) {
+  init(input: JSONValue) {
     recap = input["recap"]?.string ?? ""
     ask = input["ask"]?.string.flatMap { $0.allSatisfy(\.isWhitespace) ? nil : $0 }
     // The desktop app's actions are objects with a label.
     actions = Array((input["actions"]?.array ?? []).compactMap { $0.string ?? $0["label"]?.string }.prefix(2))
-    self.isOpen = isOpen
   }
 }
 
@@ -312,13 +317,19 @@ struct TranscriptBuilder {
       return context.transcript.toolCall(callId).flatMap { wrapUpToolNames.contains($0.name) ? $0 : nil }
     }.first
 
-    if let wrapUp {
-      built.elements.append(TranscriptElement(id: "\(turn.id)/next", kind: .nextStep(NextStep(input: wrapUp.input, isOpen: context.isLatest))))
-    }
+    if let wrapUp, context.isLatest { built.elements.append(TranscriptElement(id: "\(turn.id)/next", kind: .nextStep(NextStep(input: wrapUp.input)))) }
 
     if turn.status != .running, let footer = footer(for: turn, in: context.transcript) {
-      built.elements.append(TranscriptElement(id: "\(turn.id)/footer", kind: .footer(footer)))
+      let replies = turn.items.compactMap { item -> String? in
+        guard case .text(let text) = item.content, !text.allSatisfy(\.isWhitespace) else { return nil }
+
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+      }
+
+      built.elements.append(TranscriptElement(id: "\(turn.id)/footer", kind: .footer(TurnFooter(text: footer, replies: replies.joined(separator: "\n\n")))))
     }
+
+    for index in built.elements.indices { built.elements[index].turn = turn.id }
 
     return built
   }
@@ -571,7 +582,7 @@ struct TranscriptBuilder {
 
     if !patch.isEmpty {
       let shown = capped(patch, id: id)
-      blocks.append(.diff(shown.lines))
+      blocks.append(.diff(shown.lines, file: toolPath(name, input: input).map { URL(filePath: $0).lastPathComponent }))
       blocks += shown.trailer
     } else if !result.isEmpty {
       let shown = capped(result.components(separatedBy: "\n"), id: id)

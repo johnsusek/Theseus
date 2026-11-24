@@ -143,6 +143,7 @@ enum Markdown {
       var before = blockSpacing
       var cell: (table: Int, columns: [PresentationIntent.TableColumn], row: Int, column: Int, isHeader: Bool)?
       var code = false
+      var language: String?
       var isRule = false
 
       for component in components {
@@ -160,8 +161,9 @@ enum Markdown {
         case .header(let level):
           font = NSFont.systemFont(ofSize: [1: 20.0, 2: 17, 3: 15][level] ?? style.font.pointSize, weight: level < 3 ? .bold : .semibold)
           before = 18
-        case .codeBlock:
+        case .codeBlock(let languageHint):
           code = true
+          language = languageHint
         case .thematicBreak:
           isRule = true
         case .table(let columns):
@@ -205,7 +207,7 @@ enum Markdown {
 
       if code {
         let source = block.runs.map { String(parsed[$0.range].characters) }.joined()
-        paragraphs += codeLines(source.hasSuffix("\n") ? String(source.dropLast()) : source, left: left, right: style.right, before: before, color: style.color, quoteBars: quoteBars, width: style.width)
+        paragraphs += codeLines(source.hasSuffix("\n") ? String(source.dropLast()) : source, language: language, left: left, right: style.right, before: before, color: style.color, quoteBars: quoteBars, width: style.width)
         continue
       }
 
@@ -242,12 +244,22 @@ enum Markdown {
 
   /// Monospaced lines on one rounded background, a paragraph per line.
   /// With a column `width`, the block is only as wide as its widest line.
-  static func codeLines(_ source: String, left: CGFloat, right: CGFloat, before: CGFloat, color: NSColor = .labelColor, quoteBars: [CGFloat] = [], width: CGFloat = .infinity) -> [Paragraph] {
+  /// Makes the Copy and Run buttons at the end of a code block's first line, and says how wide they are. The app sets it; without it a block has no buttons.
+  static var codeButtons: ((_ code: String, _ language: String?) -> (attachment: NSTextAttachment, width: CGFloat))?
+
+  /// With a column `width`, the block is only as wide as its widest line, and its first line ends in the code buttons.
+  static func codeLines(_ source: String, language: String? = nil, left: CGFloat, right: CGFloat, before: CGFloat, color: NSColor = .labelColor, quoteBars: [CGFloat] = [], width: CGFloat = .infinity) -> [Paragraph] {
     let lines = source.components(separatedBy: "\n")
-    let widest = lines.map { ceil(TranscriptStyle.text($0, font: TranscriptStyle.code).size().width) }.max() ?? 0
+    let colored = CodeHighlighter.lines(lines, language: language, font: TranscriptStyle.code, color: color)
+    let buttons = width.isFinite ? codeButtons?(source, language) : nil
+    let gap = 16.0
+    var widest = colored.map { ceil($0.size().width) }.max() ?? 0
+
+    if let buttons { widest = max(widest, ceil(colored[0].size().width) + gap + buttons.width) }
+
     let right = width.isFinite ? max(right, width - left - widest - 2 * Decoration.codeInset - 1) : right
 
-    return lines.enumerated().map { index, line in
+    return colored.enumerated().map { index, content in
       let isFirst = index == 0
       let isLast = index == lines.count - 1
       let padding = Decoration.Fill.code.padding
@@ -258,9 +270,17 @@ enum Markdown {
 
       if width.isFinite { base[.fitsColumn] = true }
 
-      return Paragraph(content: TranscriptStyle.text(line, font: TranscriptStyle.code, color: color), base: base)
+      // A tab stop at the text's right edge puts the buttons there.
+      if isFirst, let buttons {
+        style.tabStops = [NSTextTab(textAlignment: .right, location: width - right - Decoration.codeInset)]
+        content.append(NSAttributedString(string: "\t", attributes: [.font: TranscriptStyle.code]))
+        content.append(NSAttributedString(attachment: buttons.attachment))
+      }
+
+      return Paragraph(content: content, base: base)
     }
   }
+
 
   /// TextKit 2 has no table layout, so a row is a line per wrapped cell line, with a tab stop per column.
   /// A column is as wide as its widest cell while the table fits the column; otherwise `fit` narrows the widest columns.

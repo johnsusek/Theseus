@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     self.workspace = workspace
     super.init()
     workspace.appendSystemPrompt = HostTools.prompt
+    Markdown.codeButtons = CodeButtonsView.attachment
     workspace.hostServers = { [unowned self] session in HostTools.servers(for: session, app: self) }
   }
 

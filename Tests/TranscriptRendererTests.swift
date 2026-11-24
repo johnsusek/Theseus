@@ -115,8 +115,16 @@ struct TranscriptRendererTests {
     #expect(renderer.permissionBody(.diff(["+a", "+b"])).string == "\t1\ta\n\t2\tb")
   }
 
+  @Test func patchesUnderAFileNameAreColored() {
+    let detail = renderer.attributedString(for: TranscriptElement(id: "t1/detail", kind: .detail([.diff(["+let a = 1"], file: "A.swift")])))
+    let keyword = detail.attribute(.foregroundColor, at: (detail.string as NSString).range(of: "let").location, effectiveRange: nil) as? NSColor
+
+    #expect(detail.string == "A.swift\n\t1\tlet a = 1\n")
+    #expect(keyword != nil && keyword != NSColor.labelColor)
+  }
+
   @Test func decoratedTextCanBeArchived() throws {
-    let text = renderer.attributedString(for: TranscriptElement(id: "p", kind: .reply("> quoted\n\n```\ncode\n```")))
+    let text = renderer.attributedString(for: TranscriptElement(id: "p", kind: .reply("> quoted\n\n```swift\nlet code = 1\n```")))
     let data = try NSKeyedArchiver.archivedData(withRootObject: text, requiringSecureCoding: false)
     let copy = try #require(try NSKeyedUnarchiver.unarchivedObject(ofClasses: [NSAttributedString.self, DecorationValue.self, NSParagraphStyle.self, NSFont.self, NSColor.self, NSTextTab.self], from: data) as? NSAttributedString)
 

@@ -16,6 +16,9 @@ settings:
 packages:
   ClaudeEngine:
     path: ../ClaudeEngine
+  Highlightr:
+    url: https://github.com/raspu/Highlightr
+    from: 2.2.0
 schemes:
   Theseus:
     build:
@@ -42,6 +45,7 @@ targets:
         product: ClaudeEngine
       - package: ClaudeEngine
         product: ClaudeWorkspace
+      - package: Highlightr
     info:
       path: App/Info.plist
       properties:
@@ -68,6 +72,7 @@ targets:
       - path: App/FilePaths.swift
       - path: App/Log.swift
       - path: App/Markdown.swift
+      - path: App/CodeHighlighter.swift
       - path: App/PermissionPrompt.swift
       - path: App/ProjectsModel.swift
       - path: App/StatusModel.swift
@@ -81,6 +86,7 @@ targets:
         product: ClaudeEngine
       - package: ClaudeEngine
         product: ClaudeWorkspace
+      - package: Highlightr
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
