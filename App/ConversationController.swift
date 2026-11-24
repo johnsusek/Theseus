@@ -288,15 +288,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   }
 
   private func report(_ error: any Error, as title: String) {
-    guard let window, !isClosed else { return log.error("\(title): \(error.localizedDescription)") }
-
-    let alert = NSAlert()
-    alert.alertStyle = .warning
-    alert.messageText = title
-    alert.informativeText = error.localizedDescription
-    // A sheet needs its window on screen, so a background tab comes forward.
-    window.makeKeyAndOrderFront(nil)
-    alert.beginSheetModal(for: window)
+    showError(error, as: title, on: isClosed ? nil : window)
   }
 
   // MARK: Commands
@@ -308,13 +300,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   @objc func stopSession(_ sender: Any?) {
     guard let live = session?.live else { return }
 
-    Task {
-      do {
-        try await live.interrupt()
-      } catch {
-        report(error, as: "Claude Could Not Be Stopped")
-      }
-    }
+    interrupt(live) { [weak self] error in self?.report(error, as: "Claude Could Not Be Stopped") }
   }
 
   /// Session > Allow and Deny answer the oldest permission request, as its card's buttons would.

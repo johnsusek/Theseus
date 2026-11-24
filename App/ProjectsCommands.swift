@@ -162,13 +162,7 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
   /// Session > Stop: interrupts the turn of every selected session that is working.
   @objc func stopSession(_ sender: Any?) {
     for live in targets(sender).compactMap(\.live) where live.isRunning && live.state != .idle {
-      Task {
-        do {
-          try await live.interrupt()
-        } catch {
-          report(error, as: "Claude Could Not Be Stopped")
-        }
-      }
+      interrupt(live) { [weak self] error in self?.report(error, as: "Claude Could Not Be Stopped") }
     }
   }
 
@@ -181,13 +175,7 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
   }
 
   private func report(_ error: any Error, as title: String) {
-    guard let window, window.isVisible else { return log.error("\(title): \(error.localizedDescription)") }
-
-    let alert = NSAlert()
-    alert.alertStyle = .warning
-    alert.messageText = title
-    alert.informativeText = error.localizedDescription
-    alert.beginSheetModal(for: window)
+    showError(error, as: title, on: window?.isVisible == true ? window : nil)
   }
 
   // MARK: View commands
