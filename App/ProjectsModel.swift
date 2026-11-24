@@ -10,16 +10,24 @@ enum RowStatus: Int, CaseIterable {
   var symbol: String { ["exclamationmark.triangle", "xmark.circle", "circle.dotted", "checkmark.circle", "moon.zzz"][rawValue] }
 }
 
-/// How recently a session must have been active to show, counted in calendar days with today as the first.
+/// How recently a session must have been active to show: hours count back from now, days are calendar days with today as the first.
 enum UpdatedRange: Int, CaseIterable {
-  case anyTime, today, twoDays, week, month
+  case anyTime, fourHours, eightHours, today, twoDays, week, month
 
-  var title: String { ["Any Time", "Today", "Last 2 Days", "Last 7 Days", "Last 30 Days"][rawValue] }
+  var title: String { ["Any Time", "Last 4 Hours", "Last 8 Hours", "Today", "Last 2 Days", "Last 7 Days", "Last 30 Days"][rawValue] }
 
   func start(now: Date, calendar: Calendar = .current) -> Date? {
-    guard self != .anyTime else { return nil }
+    let today = calendar.startOfDay(for: now)
 
-    return calendar.date(byAdding: .day, value: 1 - [0, 1, 2, 7, 30][rawValue], to: calendar.startOfDay(for: now))
+    switch self {
+    case .anyTime: return nil
+    case .fourHours: return now.addingTimeInterval(-4 * 3600)
+    case .eightHours: return now.addingTimeInterval(-8 * 3600)
+    case .today: return today
+    case .twoDays: return calendar.date(byAdding: .day, value: -1, to: today)
+    case .week: return calendar.date(byAdding: .day, value: -6, to: today)
+    case .month: return calendar.date(byAdding: .day, value: -29, to: today)
+    }
   }
 }
 

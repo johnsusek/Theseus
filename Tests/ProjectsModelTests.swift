@@ -78,7 +78,7 @@ struct ProjectsModelTests {
     #expect(ids(query.groups(all)) == ["app: c b a"])
   }
 
-  @Test func updatedFilterCountsCalendarDays() throws {
+  @Test func updatedFilterCountsHoursAndCalendarDays() throws {
     // `now` is 08:00 UTC, so 20 hours ago is yesterday.
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
@@ -88,6 +88,10 @@ struct ProjectsModelTests {
     #expect(UpdatedRange.anyTime.start(now: now, calendar: calendar) == nil)
     #expect(UpdatedRange.today.start(now: now, calendar: calendar) == now.addingTimeInterval(-8 * 3600))
     #expect(UpdatedRange.twoDays.start(now: now, calendar: calendar) == now.addingTimeInterval(-32 * 3600))
+    query.updated = .fourHours
+    #expect(ids(query.groups(all, now: now)) == ["app: today"])
+    query.updated = .twoDays
+    #expect(ids(query.groups(all, now: now)) == ["app: today yesterday"])
     query.updated = .week
     #expect(ids(query.groups(all, now: now)) == ["app: today yesterday lastWeek"])
     query.updated = .anyTime
