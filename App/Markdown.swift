@@ -229,7 +229,9 @@ enum Markdown {
       if let marker, let listStart {
         paragraph.firstLineHeadIndent = listStart
         paragraph.tabStops = [NSTextTab(textAlignment: .right, location: listStart + 23), NSTextTab(textAlignment: .left, location: left)]
-        content.insert(TranscriptStyle.text("\t\(marker)\t", font: style.font, color: style.color), at: 0)
+        // A bullet in the text's own weight reads smaller than the desktop app's.
+        let markerFont = isOrdered ? style.font : NSFont.systemFont(ofSize: style.font.pointSize, weight: .heavy)
+        content.insert(TranscriptStyle.text("\t\(marker)\t", font: markerFont, color: style.color), at: 0)
       }
 
       var base: [NSAttributedString.Key: Any] = [.paragraphStyle: paragraph, .font: font, .foregroundColor: style.color]
@@ -248,16 +250,18 @@ enum Markdown {
   static var codeButtons: ((_ code: String, _ language: String?) -> (attachment: NSTextAttachment, width: CGFloat))?
 
   /// With a column `width`, the block is only as wide as its widest line, and its first line ends in the code buttons.
-  static func codeLines(_ source: String, language: String? = nil, left: CGFloat, right: CGFloat, before: CGFloat, color: NSColor = .labelColor, quoteBars: [CGFloat] = [], width: CGFloat = .infinity) -> [Paragraph] {
+  /// A `badge`, such as a command output's terminal symbol, takes the buttons' place, and its block spans the column.
+  static func codeLines(_ source: String, language: String? = nil, left: CGFloat, right: CGFloat, before: CGFloat, color: NSColor = .labelColor, quoteBars: [CGFloat] = [], width: CGFloat = .infinity, badge: NSAttributedString? = nil) -> [Paragraph] {
     let lines = source.components(separatedBy: "\n")
     let colored = CodeHighlighter.lines(lines, language: language, font: TranscriptStyle.code, color: color)
-    let buttons = width.isFinite ? codeButtons?(source, language) : nil
+    let buttons = width.isFinite && badge == nil ? codeButtons?(source, language) : nil
+    let trailing = buttons.map { NSAttributedString(attachment: $0.attachment) } ?? badge
     let gap = 16.0
     var widest = colored.map { ceil($0.size().width) }.max() ?? 0
 
     if let buttons { widest = max(widest, ceil(colored[0].size().width) + gap + buttons.width) }
 
-    let right = width.isFinite ? max(right, width - left - widest - 2 * Decoration.codeInset - 1) : right
+    let right = width.isFinite && badge == nil ? max(right, width - left - widest - 2 * Decoration.codeInset - 1) : right
 
     return colored.enumerated().map { index, content in
       let isFirst = index == 0
@@ -271,10 +275,10 @@ enum Markdown {
       if width.isFinite { base[.fitsColumn] = true }
 
       // A tab stop at the text's right edge puts the buttons there.
-      if isFirst, let buttons {
+      if isFirst, width.isFinite, let trailing {
         style.tabStops = [NSTextTab(textAlignment: .right, location: width - right - Decoration.codeInset)]
         content.append(NSAttributedString(string: "\t", attributes: [.font: TranscriptStyle.code]))
-        content.append(NSAttributedString(attachment: buttons.attachment))
+        content.append(trailing)
       }
 
       return Paragraph(content: content, base: base)

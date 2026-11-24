@@ -121,7 +121,7 @@ struct TranscriptBuilderTests {
     builder.toggle("t2")
     let elements = builder.elements(for: TranscriptInput(transcript: transcript))
 
-    #expect(elements.map(\.shape) == ["prompt(Go)", "group(Read a file, ran a command)", "tool(Read A.swift)", "tool(Ran swift\u{2026})", "detail"])
+    #expect(elements.map(\.shape) == ["prompt(Go)", "group(Read A.swift, ran a command)", "tool(Read A.swift)", "tool(Ran swift\u{2026})", "detail"])
     #expect(elements.map(\.box) == [nil, nil, BoxSlot(isFirst: true), BoxSlot(), BoxSlot(isLast: true)])
     #expect(elements[4].kind == .detail([.command("$ swift test"), .output("6 tests passed")]))
 
@@ -168,12 +168,11 @@ struct TranscriptBuilderTests {
     #expect(elementEdits(from: grown, to: committed).isEmpty)
   }
 
-  @Test func thinkingShowsOnlyInVerbose() throws {
-    let transcript = try transcript([prompt("Go"), thought("Weighing it."), said("Answer.")])
+  @Test func thinkingWithTextShows() throws {
+    let transcript = try transcript([prompt("Go"), thought("Weighing it."), thought(""), said("Answer.")])
 
-    #expect(shapes(transcript) == ["prompt(Go)", "reply(Answer.)"])
-    #expect(shapes(transcript) { $0.isVerbose = true } == ["prompt(Go)", "thought(Weighing it.)", "reply(Answer.)"])
-    #expect(shapes(transcript, streaming: [.thinking("Hmm")], isLive: true) == ["prompt(Go)", "reply(Answer.)"])
+    #expect(shapes(transcript) == ["prompt(Go)", "thought(Weighing it.)", "reply(Answer.)"])
+    #expect(shapes(transcript, streaming: [.thinking("Hmm")], isLive: true) == ["prompt(Go)", "thought(Weighing it.)", "reply(Answer.)", "thought(Hmm)"])
   }
 
   @Test func activityFollowsTheRunningTurnBeforeQueuedPrompts() throws {
@@ -202,7 +201,7 @@ struct TranscriptBuilderTests {
     #expect(builder.elements(for: TranscriptInput(transcript: transcript, pending: pending, isLive: true)).map(\.shape) == [
       "prompt(Go)", "tool(Running rm\u{2026})", "permission(r1)", "tool(Reading a)", "permission(r2)"
     ])
-    #expect(builder.elements(for: TranscriptInput(transcript: transcript, isLive: true)).map(\.shape) == ["prompt(Go)", "group(Ran a command, read a file)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: transcript, isLive: true)).map(\.shape) == ["prompt(Go)", "group(Ran a command, read a)"])
   }
 
   @Test func taskListFollowsTheRunningTurnsFirstBlock() throws {
@@ -223,8 +222,7 @@ struct TranscriptBuilderTests {
     let bare = try transcript([prompt("Go")])
 
     #expect(builder.elements(for: TranscriptInput(transcript: bare, tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "tasks(1)"])
-    #expect(builder.elements(for: TranscriptInput(transcript: bare, streaming: [.thinking("Hmm")], tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "tasks(1)"])
-    #expect(builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go"), thought("Hmm")]), tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "tasks(1)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go"), thought("")]), tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "tasks(1)"])
   }
 
   @Test func unansweredCallInAnEndedTurnIsStopped() throws {
@@ -246,14 +244,14 @@ struct TranscriptBuilderTests {
     #expect(states(cut, isLive: false).first == .completed)
   }
 
-  @Test func midTurnNotificationIsALineNotABubble() throws {
+  @Test func midTurnNotificationIsHidden() throws {
     let transcript = try transcript([
       prompt("Go"), said("Working."),
       prompt("<task-notification><summary>Agent finished</summary></task-notification>", at: "10:01:00", origin: "task_notification"),
       prompt("And one more thing", at: "10:02:00")
     ])
 
-    #expect(shapes(transcript, isLive: true) == ["prompt(Go)", "reply(Working.)", "notice(bell, Agent finished)", "prompt(And one more thing)"])
+    #expect(shapes(transcript, isLive: true) == ["prompt(Go)", "reply(Working.)", "prompt(And one more thing)"])
   }
 
   @Test func turnsOtherThingsStartedAreOneLine() throws {
@@ -264,7 +262,7 @@ struct TranscriptBuilderTests {
     ])
 
     #expect(shapes(transcript) == [
-      "notice(bell, Agent finished scanning)", "reply(Noted.)", "footer(2.4s)",
+      "reply(Noted.)", "footer(2.4s)",
       "notice(clock, Nightly check \u{2026})", "reply(Fine.)", "footer(0.9s)", "prompt(Typed by a person)"
     ])
   }
@@ -330,6 +328,52 @@ struct TranscriptBuilderTests {
     #expect(shown == [
       "prompt(Go)", "reply(Run this:\n\n```bash\nlook.sh 1\n```)", "shell(shot 1 -> bloom)", "reply(Then tell me.)", "footer(1m 52s)", "shell(date | Tue)"
     ])
+  }
+
+  @Test func turnStartedByARunKeepsWhatClaudeDidNext() throws {
+    let reply = "Run this:\n\n```bash\nlook.sh 1\n```"
+    let wrapUp: JSONValue = ["recap": "Staged.", "ask": "Did look.sh 1 run?", "actions": [["label": "Done"]]]
+    let ran = prompt("<bash-input>look.sh 1</bash-input><bash-stdout>ok</bash-stdout>", at: "10:05:00")
+    let shown = shapes(try transcript([prompt("Go"), said(reply), call("w1", "mcp__ccd_turn__wrap_up", wrapUp), returned("w1", "Shown"), finished(), ran, said("Captured."), finished(milliseconds: 3000)]))
+
+    #expect(shown == ["prompt(Go)", "reply(Run this:\n\n```bash\nlook.sh 1\n```)", "shell(ok)", "reply(Captured.)", "footer(3.0s)"])
+  }
+
+  @Test func earlierTurnKeepsItsQuestionAsARow() throws {
+    let wrapUp: JSONValue = ["recap": "Staged.", "ask": "Retake now?", "actions": [["label": "Retake"]]]
+    let turns = try transcript([prompt("Go"), said("Ready."), call("w1", "mcp__ccd_turn__wrap_up", wrapUp), returned("w1", "Shown"), finished(milliseconds: 1000), prompt("Retake", at: "10:01:00"), said("Done."), finished(milliseconds: 1000)])
+
+    #expect(shapes(turns) == ["prompt(Go)", "reply(Ready.)", "ask(Retake now?)", "footer(1.0s)", "prompt(Retake)", "reply(Done.)", "footer(1.0s)"])
+    #expect(shapes(turns) { $0.toggle("0/ask") }.contains("detail"))
+  }
+
+  @Test func answeredQuestionAndSentImageSplitTheGroup() throws {
+    let questions: JSONValue = ["questions": [["question": "Which wallpaper?", "header": "Wallpaper", "options": [["label": "Vivid"]]]]]
+    let skipped: JSONValue = ["questions": [["question": "Which gradient?", "header": "Gradient", "options": [["label": "Bloom"]]]]]
+    let shown = shapes(try transcript([
+      prompt("Go"),
+      call("b1", "Bash", ["command": "ls"]), returned("b1", "a"),
+      call("q1", "AskUserQuestion", questions), returned("q1", "answered", output: ["answers": ["Which wallpaper?": "Vivid"]]),
+      call("r1", "Read", ["file_path": "/tmp/sheet.png"]), returned("r1", "image"),
+      call("s1", "SendUserFile", ["files": ["/tmp/crops.png"], "caption": "The crops"]), returned("s1", "1 file delivered to user."),
+      call("q2", "AskUserQuestion", skipped), returned("q2", "skipped", output: ["answers": ["Which gradient?": "[User did not answer this question \u{2014} they sent a message instead.]"]])
+    ]))
+
+    #expect(shown == ["prompt(Go)", "tool(Ran a command)", "question(Which wallpaper? = Vivid)", "tool(Read sheet.png)", "reply(The crops)", "image(crops.png)", "tool(Asked \u{201C}Gradient\u{201D})"])
+  }
+
+  @Test func summaryNamesALoneReadAndPutsSkillsLast() throws {
+    let shown = shapes(try transcript([
+      prompt("Go"),
+      call("k1", "Skill", ["skill": "stagehand"]), returned("k1", "ok"),
+      call("b1", "Bash", ["command": "ls"]), returned("b1", "a"),
+      call("r1", "Read", ["file_path": "/tmp/menubar.png"]), returned("r1", "image"),
+      said("Next."),
+      call("e1", "Edit", ["file_path": "/tmp/a.swift"]), returned("e1", "ok"),
+      call("r2", "Read", ["file_path": "/tmp/b.swift"]), returned("r2", "b")
+    ]))
+
+    #expect(shown == ["prompt(Go)", "group(Ran a command, read menubar.png, ran a skill)", "reply(Next.)", "group(Edited a file, read a file)"])
   }
 
   @Test func imageResultsBecomeThumbnails() throws {

@@ -32,7 +32,7 @@ final class TranscriptView: NSView {
     }
   }
 
-  /// A verbose transcript expands every tool call and shows thinking.
+  /// A verbose transcript expands every tool call.
   var isVerbose: Bool {
     get { builder.isVerbose }
     set {
@@ -90,6 +90,10 @@ final class TranscriptView: NSView {
     }
     renderer.clock = { since, chevron in ViewAttachment(size: ClockView.size) { ClockView(since: since, chevron: chevron) } }
     renderer.thumbnail = { thumbnail in ViewAttachment(size: TranscriptStyle.thumbnailSize) { ThumbnailView(thumbnail) } }
+    renderer.picture = { image, width in
+      let size = SentImageView.size(of: image, columnWidth: width)
+      return ViewAttachment(size: size) { SentImageView(image, size: size) }
+    }
 
     scrollView.documentView = textView
     scrollView.drawsBackground = false

@@ -96,7 +96,7 @@ struct TranscriptElement: Equatable, Identifiable {
     case notice(symbol: String, text: String, source: String)
     /// Markdown.
     case reply(String)
-    /// A thinking block, shown in a verbose transcript.
+    /// A thinking block's text, which reads as prose like a reply.
     case thought(String)
     /// What the running turn is doing, and when it started.
     case activity(text: String, since: Date)
@@ -105,6 +105,12 @@ struct TranscriptElement: Equatable, Identifiable {
     case detail([DetailBlock])
     /// A command the user ran, or only its output when it sits under the reply's code block it came from.
     case shell(command: String?, output: String)
+    /// AskUserQuestion's questions with the answers picked, in a bordered box.
+    case question([AnsweredQuestion])
+    /// An image SendUserFile showed the user, drawn large.
+    case image(SentImage)
+    /// An earlier turn's next-step question, which opens to show its recap.
+    case ask(String, isExpanded: Bool)
     case tasks([TaskItem])
     case permission(requestId: String)
     case nextStep(NextStep)
@@ -120,6 +126,17 @@ struct TranscriptElement: Equatable, Identifiable {
   var box: BoxSlot?
 }
 
+struct AnsweredQuestion: Equatable {
+  var question: String
+  var answer: String?
+}
+
+/// A file SendUserFile showed the user, by its path.
+struct SentImage: Equatable {
+  var id: String
+  var path: String
+}
+
 /// Under a finished turn, shown while the pointer is over the turn: "2:14 PM · 1m 52s", and the turn's replies for its Copy button.
 struct TurnFooter: Equatable {
   var text: String
@@ -130,6 +147,7 @@ struct TurnFooter: Equatable {
 let wrapUpToolName = "mcp__theseus__wrap_up"
 
 /// The desktop app's own turn tools, in sessions it ran: its `wrap_up` reads as a card like Theseus's, and its task list call has no row.
+/// An earlier turn's `wrap_up` leaves its question as a row.
 private let wrapUpToolNames: Set = [wrapUpToolName, "mcp__ccd_turn__wrap_up"]
 private let unshownToolNames = wrapUpToolNames.union(["mcp__ccd_turn__update_plan"])
 
@@ -179,7 +197,7 @@ struct Activity: Equatable {
 
 /// Turns a transcript into elements. Finished turns are kept between calls, so a streaming reply rebuilds only the last turn.
 struct TranscriptBuilder {
-  /// A verbose transcript expands every row and shows thinking.
+  /// A verbose transcript expands every row.
   var isVerbose = false { didSet { cache = [:] } }
   /// Rows and groups the user opened.
   var expanded: Set<String> = [] { didSet { cache = [:] } }
@@ -212,8 +230,12 @@ struct TranscriptBuilder {
     var activity: Activity?
     /// Commands run from this turn's code blocks, shown under them.
     var runs: [ShellRun]
-    /// The turn is a command shown under an earlier turn's code block, so it shows nothing itself.
+    /// The turn opens with a command shown under an earlier turn's code block, so it shows no prompt.
     var isAttached: Bool
+    /// The next turn is a command run from this turn's code block, which answers its next-step question.
+    var isFollowedByRun: Bool
+    /// The next turn shows no prompt, so it reads as more of this one, and this one leaves the footer to it.
+    var continuesInNext: Bool
   }
 
   private struct CachedTurn {
@@ -238,6 +260,10 @@ struct TranscriptBuilder {
     case thought(id: String, text: String)
     case prompt(id: String, text: String, origin: String?)
     case tool(id: String, name: String, input: JSONValue, call: ToolCall?)
+    /// An answered AskUserQuestion.
+    case question(id: String, call: ToolCall)
+    /// A finished SendUserFile.
+    case sentFile(id: String, call: ToolCall)
   }
 
   private struct Context {
@@ -282,6 +308,9 @@ struct TranscriptBuilder {
         continue
       }
 
+      // Claude can carry on after the command, and its reply can hold the next command.
+      defer { if !turn.items.isEmpty { replied = turn } }
+
       let hasBlock = replied?.items.contains { item in
         guard case .text(let text) = item.content else { return false }
 
@@ -297,7 +326,10 @@ struct TranscriptBuilder {
     for (index, turn) in turns.enumerated() {
       let isRunning = index == turns.count - 1 && input.isLive && turn.status == .running
       let isLatest = index == turns.count - 1 && !isRunning && input.sent.isEmpty
-      let key = TurnKey(range: turn.messageRange, lastItemId: turn.items.last?.id, status: turn.status, isRunning: isRunning, isLatest: isLatest, tasks: isRunning ? input.tasks : [], pending: input.pending, today: today, activity: isRunning ? input.activity : nil, runs: runs[turn.id] ?? [], isAttached: attached.contains(turn.id))
+      let next = index + 1 < turns.count ? turns[index + 1] : nil
+      let isFollowedByRun = next.map { attached.contains($0.id) } ?? false
+      let continuesInNext = isFollowedByRun || next?.origin == "task_notification"
+      let key = TurnKey(range: turn.messageRange, lastItemId: turn.items.last?.id, status: turn.status, isRunning: isRunning, isLatest: isLatest, tasks: isRunning ? input.tasks : [], pending: input.pending, today: today, activity: isRunning ? input.activity : nil, runs: runs[turn.id] ?? [], isAttached: attached.contains(turn.id), isFollowedByRun: isFollowedByRun, continuesInNext: continuesInNext)
       var built: BuiltTurn
 
       context.isRunning = isRunning
@@ -361,13 +393,9 @@ struct TranscriptBuilder {
     var built = BuiltTurn()
 
     if let run = ShellRun(prompt: turn.prompt?.text) {
-      if !key.isAttached { built.elements.append(TranscriptElement(id: "\(turn.id)/shell", kind: .shell(command: run.command, output: run.output), turn: turn.id, spacing: 22)) }
-
-      return built
-    }
-
-    if let prompt = turn.prompt?.text, !prompt.allSatisfy(\.isWhitespace) {
-      built.elements.append(TranscriptElement(id: "\(turn.id)/prompt", kind: promptKind(prompt, origin: turn.origin), spacing: 22))
+      if !key.isAttached { built.elements.append(TranscriptElement(id: "\(turn.id)/shell", kind: .shell(command: run.command, output: run.output), spacing: 22)) }
+    } else if let prompt = turn.prompt?.text, !prompt.allSatisfy(\.isWhitespace), let kind = promptKind(prompt, origin: turn.origin) {
+      built.elements.append(TranscriptElement(id: "\(turn.id)/prompt", kind: kind, spacing: 22))
     }
 
     var body = blocks(entries(turnId: String(turn.id), items: turn.items, streaming: streaming, context: context), tasks: key.tasks, context: context)
@@ -386,9 +414,18 @@ struct TranscriptBuilder {
       return context.transcript.toolCall(callId).flatMap { wrapUpToolNames.contains($0.name) ? $0 : nil }
     }.first
 
-    if let wrapUp, context.isLatest { built.elements.append(TranscriptElement(id: "\(turn.id)/next", kind: .nextStep(NextStep(input: wrapUp.input)))) }
+    if let wrapUp, context.isLatest {
+      built.elements.append(TranscriptElement(id: "\(turn.id)/next", kind: .nextStep(NextStep(input: wrapUp.input))))
+    } else if let wrapUp, !key.isFollowedByRun, let ask = NextStep(input: wrapUp.input).ask {
+      let id = "\(turn.id)/ask"
+      let isExpanded = expanded.contains(id)
+      let recap = NextStep(input: wrapUp.input).recap
+      built.elements.append(TranscriptElement(id: id, kind: .ask(ask, isExpanded: isExpanded), spacing: 30))
 
-    if turn.status != .running, let footer = footer(for: turn, in: context.transcript) {
+      if isExpanded, !recap.isEmpty { built.elements.append(TranscriptElement(id: "\(id)/detail", kind: .detail([.report(recap)]), spacing: 8)) }
+    }
+
+    if turn.status != .running, !key.continuesInNext, let footer = footer(for: turn, in: context.transcript) {
       let replies = turn.items.compactMap { item -> String? in
         guard case .text(let text) = item.content, !text.allSatisfy(\.isWhitespace) else { return nil }
 
@@ -403,13 +440,16 @@ struct TranscriptBuilder {
     return built
   }
 
-  private func promptKind(_ prompt: String, origin: String?) -> TranscriptElement.Kind {
-    let symbols = ["task_notification": "bell", "scheduled": "clock", "peer": "arrow.left.arrow.right"]
+  /// Nil for a task notification, which the desktop app does not show.
+  private func promptKind(_ prompt: String, origin: String?) -> TranscriptElement.Kind? {
+    guard origin != "task_notification" else { return nil }
+
+    let symbols = ["scheduled": "clock", "peer": "arrow.left.arrow.right"]
     guard let symbol = origin.flatMap({ symbols[$0] }) else { return .prompt(prompt.trimmingCharacters(in: .whitespacesAndNewlines)) }
 
     var line = prompt
 
-    // A task notification wraps its one-line summary in tags.
+    // A notice wraps its one-line summary in tags.
     if let start = prompt.range(of: "<summary>"), let end = prompt.range(of: "</summary>", range: start.upperBound..<prompt.endIndex) {
       line = String(prompt[start.upperBound..<end.lowerBound])
     }
@@ -429,9 +469,17 @@ struct TranscriptBuilder {
       case .text(let text):
         if !text.allSatisfy(\.isWhitespace) { entries.append(.reply(id: id, text: text)) }
       case .thinking(let text):
-        if isVerbose, !text.allSatisfy(\.isWhitespace) { entries.append(.thought(id: id, text: text)) }
+        if !text.allSatisfy(\.isWhitespace) { entries.append(.thought(id: id, text: text)) }
       case .toolCall(let callId):
-        if let call = context.transcript.toolCall(callId), !unshownToolNames.contains(call.name) { entries.append(.tool(id: callId, name: call.name, input: call.input, call: call)) }
+        guard let call = context.transcript.toolCall(callId), !unshownToolNames.contains(call.name) else { break }
+
+        if call.name == "AskUserQuestion", call.status == .completed {
+          entries.append(.question(id: callId, call: call))
+        } else if call.name == "SendUserFile", call.status == .completed {
+          entries.append(.sentFile(id: callId, call: call))
+        } else {
+          entries.append(.tool(id: callId, name: call.name, input: call.input, call: call))
+        }
       case .prompt(let blocks, let origin):
         if !blocks.text.allSatisfy(\.isWhitespace) { entries.append(.prompt(id: id, text: blocks.text, origin: origin)) }
       }
@@ -444,7 +492,7 @@ struct TranscriptBuilder {
       case .text(let text):
         if !text.allSatisfy(\.isWhitespace) { entries.append(.reply(id: id, text: text)) }
       case .thinking(let text):
-        if isVerbose, !text.allSatisfy(\.isWhitespace) { entries.append(.thought(id: id, text: text)) }
+        if !text.allSatisfy(\.isWhitespace) { entries.append(.thought(id: id, text: text)) }
       case .toolUse(let callId, let name, let partialInput):
         guard !unshownToolNames.contains(name) else { break }
 
@@ -463,8 +511,10 @@ struct TranscriptBuilder {
     var built = BuiltTurn()
     var index = 0
     var isFirst = true
+    var followsPrompt = false
 
     while index < entries.count {
+      let start = built.elements.count
       var end = index + 1
 
       if folds(entries[index], context: context) {
@@ -481,6 +531,11 @@ struct TranscriptBuilder {
       } else {
         single(run[0], into: &built, context: context)
       }
+
+      // A prompt taken mid-turn gets the room a turn's own prompt does.
+      if followsPrompt, start < built.elements.count { built.elements[start].spacing = 34 }
+
+      if case .prompt = run[0], start < built.elements.count, case .prompt = built.elements[start].kind { followsPrompt = true } else { followsPrompt = false }
 
       if isFirst, !tasks.isEmpty { built.elements.append(TranscriptElement(id: "tasks", kind: .tasks(tasks))) }
 
@@ -526,7 +581,30 @@ struct TranscriptBuilder {
     case .thought(let id, let text):
       built.elements.append(TranscriptElement(id: id, kind: .thought(text.trimmingCharacters(in: .whitespacesAndNewlines))))
     case .prompt(let id, let text, let origin):
-      built.elements.append(TranscriptElement(id: id, kind: promptKind(text, origin: origin)))
+      guard let kind = promptKind(text, origin: origin) else { break }
+
+      var isBubble = false
+
+      if case .prompt = kind { isBubble = true }
+
+      built.elements.append(TranscriptElement(id: id, kind: kind, spacing: isBubble ? 22 : 18))
+    case .question(let id, let call):
+      question(id: id, call: call, into: &built, context: context)
+    case .sentFile(let id, let call):
+      if let caption = call.input["caption"]?.string, !caption.allSatisfy(\.isWhitespace) { built.elements.append(TranscriptElement(id: "\(id)/caption", kind: .reply(caption))) }
+
+      for (index, path) in (call.input["files"]?.array ?? []).compactMap(\.string).enumerated() {
+        if imageExtensions.contains(URL(filePath: path).pathExtension.lowercased()) {
+          built.elements.append(TranscriptElement(id: "\(id)/\(index)", kind: .image(SentImage(id: "\(id)/\(index)", path: path)), spacing: 8))
+        } else {
+          var row = row(id: "\(id)/\(index)", name: "SendUserFile", input: call.input, call: call, context: context)
+          row.verb = "Sent"
+          row.target = URL(filePath: path).lastPathComponent
+          row.copy = CopySource(title: "Copy Path", text: path)
+          row.tooltip = path
+          built.elements.append(TranscriptElement(id: row.id, kind: .tool(row)))
+        }
+      }
     case .tool(let id, let name, let input, let call):
       var row = row(id: id, name: name, input: input, call: call, context: context)
 
@@ -572,7 +650,7 @@ struct TranscriptBuilder {
     let id = "group/\(rows[0].row.id)"
     let isExpanded = isVerbose || expanded.contains(id)
     let failed = rows.count { $0.row.state == .failed }
-    var summary = toolSummary(calls)
+    var summary = toolSummary(calls, namesRead: !calls.contains { ["Edit", "Write", "MultiEdit", "NotebookEdit"].contains($0.name) })
 
     if failed > 0 { summary.append(SummaryPart(text: ", \(failed) failed")) }
 
@@ -588,6 +666,30 @@ struct TranscriptBuilder {
         built.elements.append(TranscriptElement(id: "\(entry.row.id)/detail", kind: .detail(entry.detail), spacing: 0, box: BoxSlot(isLast: isLast)))
       }
     }
+  }
+
+  /// The questions with the answers picked, or one row when the user answered in the chat instead.
+  private func question(id: String, call: ToolCall, into built: inout BuiltTurn, context: Context) {
+    let answers = call.output?["answers"]?.object ?? [:]
+    let questions = (call.input["questions"]?.array ?? []).map { item in
+      let text = item["question"]?.string ?? ""
+      return (text: text, header: item["header"]?.string ?? text, answer: answers[text]?.string)
+    }
+
+    // The CLI fills in this answer for a question the user skipped by sending a message.
+    if questions.contains(where: { $0.answer?.hasPrefix("[User did not answer") == true }) {
+      var row = row(id: id, name: call.name, input: call.input, call: call, context: context)
+      row.verb = "Asked " + questions.map { "\u{201C}\($0.header)\u{201D}" }.joined(separator: ", ")
+      row.target = ""
+      row.note = "Replied in chat"
+      built.elements.append(TranscriptElement(id: id, kind: .tool(row)))
+
+      if row.isExpanded { built.elements.append(TranscriptElement(id: "\(id)/detail", kind: .detail([.report(questions.map(\.text).joined(separator: "\n\n"))]), spacing: 8)) }
+
+      return
+    }
+
+    built.elements.append(TranscriptElement(id: id, kind: .question(questions.map { AnsweredQuestion(question: $0.text, answer: $0.answer) }), box: BoxSlot(isFirst: true, isLast: true)))
   }
 
   private func row(id: String, name: String, input: JSONValue, call: ToolCall?, context: Context) -> ToolRow {
@@ -755,6 +857,9 @@ struct TranscriptBuilder {
     return duration.formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow).locale(locale))
   }
 }
+
+/// Files SendUserFile shows as an image.
+private let imageExtensions: Set = ["png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp"]
 
 /// A reply's fenced code blocks: each block's code, trimmed, and where its closing fence line ends.
 func fencedBlocks(_ text: String) -> [(code: String, end: String.Index)] {

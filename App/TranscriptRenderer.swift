@@ -13,6 +13,8 @@ struct TranscriptRenderer {
   /// The running turn's timer, with a chevron after it when it heads a group that is open (true) or closed (false).
   var clock: (Date, Bool?) -> NSTextAttachment = { _, _ in NSTextAttachment() }
   var thumbnail: (Thumbnail) -> NSTextAttachment = { _ in NSTextAttachment() }
+  /// An image SendUserFile showed, drawn no wider than the column.
+  var picture: (SentImage, CGFloat) -> NSTextAttachment = { _, _ in NSTextAttachment() }
 
   private var secondary: [NSAttributedString.Key: Any] { [.font: TranscriptStyle.font, .foregroundColor: NSColor.secondaryLabelColor] }
 
@@ -64,10 +66,8 @@ struct TranscriptRenderer {
       let content = NSMutableAttributedString(attributedString: TranscriptStyle.symbol(symbol, pointSize: 11, in: TranscriptStyle.callout))
       content.append(TranscriptStyle.text("  " + text, font: TranscriptStyle.callout, color: .secondaryLabelColor))
       return [line(content)]
-    case .reply(let text):
+    case .reply(let text), .thought(let text):
       return Markdown.paragraphs(text, style: MarkdownStyle(width: columnWidth))
-    case .thought(let text):
-      return Markdown.paragraphs(text, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), color: .secondaryLabelColor, lineSpacing: 3, width: columnWidth))
     case .activity(let text, let since):
       let content = NSMutableAttributedString(attachment: mark())
       content.append(NSAttributedString(string: " \(text)  ", attributes: secondary))
@@ -99,7 +99,31 @@ struct TranscriptRenderer {
       if lines.count > 16 { lines = lines.prefix(16) + ["\u{2026} \((lines.count - 16).formatted()) more lines"] }
 
       let commandLines = command.map { Markdown.codeLines($0, language: "bash", left: 0, right: 0, before: 0, width: columnWidth) } ?? []
-      return commandLines + Markdown.codeLines(lines.joined(separator: "\n"), left: 0, right: 0, before: commandLines.isEmpty ? 0 : 6, color: .secondaryLabelColor)
+      let badge = TranscriptStyle.symbol("apple.terminal", pointSize: 12, in: TranscriptStyle.code)
+      return commandLines + Markdown.codeLines(lines.joined(separator: "\n"), left: 0, right: 0, before: commandLines.isEmpty ? 0 : 6, color: .secondaryLabelColor, width: columnWidth, badge: badge)
+    case .question(let questions):
+      var paragraphs: [Paragraph] = []
+
+      for (index, item) in questions.enumerated() {
+        var question = line(TranscriptStyle.text(item.question), indent: inset + 6)
+        question.restyle { $0.paragraphSpacingBefore = index == 0 ? 4 : 12 }
+        paragraphs.append(question)
+
+        guard let answer = item.answer else { continue }
+
+        var reply = line(NSAttributedString(string: answer, attributes: secondary), indent: inset + 6)
+        reply.restyle { $0.paragraphSpacingBefore = 2 }
+        paragraphs.append(reply)
+      }
+
+      paragraphs[paragraphs.count - 1].restyle { $0.paragraphSpacing += 4 }
+      return paragraphs
+    case .image(let image):
+      return [line(NSAttributedString(attachment: picture(image, columnWidth)))]
+    case .ask(let text, let isExpanded):
+      let content = NSMutableAttributedString(attributedString: TranscriptStyle.text(text))
+      content.append(chevron(isOpen: isExpanded))
+      return [line(content, toggle: element.id)]
     case .tasks, .permission, .nextStep, .footer:
       return [line(NSAttributedString(attachment: card(element)))]
     }

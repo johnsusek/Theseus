@@ -24,10 +24,12 @@ struct ToolPhrase: Equatable {
 private let editPhrase = ToolPhrase("Edited", "Editing", "Could not edit", "edited a file", "made %d edits")
 private let searchPhrase = ToolPhrase("Searched for", "Searching for", "Could not search for", "ran a search", "ran %d searches")
 private let agentPhrase = ToolPhrase("Ran agent", "Running agent", "Could not run agent", "ran an agent", "ran %d agents")
+private let skillPhrase = ToolPhrase("Ran skill", "Running skill", "Could not run skill", "ran a skill", "ran skill %d times")
+private let readPhrase = ToolPhrase("Read", "Reading", "Could not read", "read a file", "read %d files")
 private let taskListPhrase = ToolPhrase("Checked the task list", "Checking the task list", "Could not check the task list", "checked the task list", "checked the task list %d times")
 
 private let toolPhrases: [String: ToolPhrase] = [
-  "Read": ToolPhrase("Read", "Reading", "Could not read", "read a file", "read %d files"),
+  "Read": readPhrase,
   "Write": ToolPhrase("Created", "Creating", "Could not create", "created a file", "created %d files"),
   "Edit": editPhrase,
   "MultiEdit": editPhrase,
@@ -44,7 +46,7 @@ private let toolPhrases: [String: ToolPhrase] = [
   "TaskList": taskListPhrase,
   "TaskGet": taskListPhrase,
   "TodoWrite": ToolPhrase("Updated the task list", "Updating the task list", "Could not update the task list", "updated the task list", "updated the task list %d times"),
-  "Skill": ToolPhrase("Used skill", "Using skill", "Could not use skill", "used a skill", "used %d skills"),
+  "Skill": skillPhrase,
   "ToolSearch": ToolPhrase("Looked up tools", "Looking up tools", "Could not look up tools", "looked up tools", "looked up tools %d times"),
   "ExitPlanMode": ToolPhrase("Proposed a plan", "Proposing a plan", "Proposed a plan", "proposed a plan", "proposed %d plans"),
   "AskUserQuestion": ToolPhrase("Asked a question", "Asking a question", "Could not ask a question", "asked a question", "asked %d questions")
@@ -223,16 +225,19 @@ struct SummaryPart: Equatable {
   var isTarget = false
 }
 
-/// A run of calls as one sentence: "Read 2 files, ran a command".
-func toolSummary(_ calls: [(name: String, target: String)]) -> [SummaryPart] {
+/// A run of calls as one sentence: "Read 2 files, ran a command", with skills last. `namesRead` names a lone read's file: "read Notes.md".
+func toolSummary(_ calls: [(name: String, target: String)], namesRead: Bool = false) -> [SummaryPart] {
   var phrases: [ToolPhrase] = []
   var parts: [SummaryPart] = []
 
   for call in calls where !phrases.contains(toolPhrase(for: call.name)) { phrases.append(toolPhrase(for: call.name)) }
 
+  phrases = phrases.filter { $0 != skillPhrase } + phrases.filter { $0 == skillPhrase }
+
   for (index, phrase) in phrases.enumerated() {
     let matching = calls.filter { toolPhrase(for: $0.name) == phrase }
-    var text = matching.count > 1 ? String(format: phrase.many, matching.count) : phrase.one
+    let one = namesRead && phrase == readPhrase && !matching[0].target.isEmpty ? "read %@" : phrase.one
+    var text = matching.count > 1 ? String(format: phrase.many, matching.count) : one
 
     if index == 0 { text = text.prefix(1).uppercased() + text.dropFirst() } else { text = ", " + text }
 

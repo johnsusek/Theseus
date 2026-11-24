@@ -173,3 +173,55 @@ final class ThumbnailView: NSView {
     return image
   }
 }
+
+/// An image SendUserFile showed the user, at half its pixel size, fit to at most 520 x 400 points. A click opens the file.
+final class SentImageView: NSView {
+  private static let sizes = NSCache<NSString, NSValue>()
+  private let path: String
+
+  /// The size the image draws at, or a line's size for a file that cannot be read.
+  static func size(of image: SentImage, columnWidth: CGFloat) -> NSSize {
+    let pixels = sizes.object(forKey: image.path as NSString)?.sizeValue ?? {
+      let properties = CGImageSourceCreateWithURL(URL(filePath: image.path) as CFURL, nil).flatMap { CGImageSourceCopyPropertiesAtIndex($0, 0, nil) as? [CFString: Any] }
+      let size = NSSize(width: properties?[kCGImagePropertyPixelWidth] as? CGFloat ?? 0, height: properties?[kCGImagePropertyPixelHeight] as? CGFloat ?? 0)
+      sizes.setObject(NSValue(size: size), forKey: image.path as NSString)
+      return size
+    }()
+    guard pixels.width > 0, pixels.height > 0 else { return NSSize(width: min(columnWidth, 520), height: 20) }
+
+    let scale = min(1, min(columnWidth, 520) / (pixels.width / 2), 400 / (pixels.height / 2))
+    return NSSize(width: floor(pixels.width / 2 * scale), height: floor(pixels.height / 2 * scale))
+  }
+
+  init(_ image: SentImage, size: NSSize) {
+    path = image.path
+    super.init(frame: NSRect(origin: .zero, size: size))
+    toolTip = image.path
+
+    guard let picture = NSImage(contentsOfFile: image.path) else {
+      log.error("Could not read the sent image \(image.path, privacy: .public)")
+      let label = NSTextField(labelWithString: "Missing image: \(URL(filePath: image.path).lastPathComponent)")
+      label.font = TranscriptStyle.callout
+      label.textColor = .systemRed
+      label.frame = bounds
+      addSubview(label)
+      return
+    }
+
+    wantsLayer = true
+    layer?.cornerRadius = 8
+    layer?.masksToBounds = true
+    layer?.borderWidth = 0.5
+    layer?.contentsGravity = .resizeAspect
+    layer?.contents = picture
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("SentImageView is built in code") }
+
+  override var wantsUpdateLayer: Bool { true }
+
+  override func updateLayer() { layer?.borderColor = NSColor.separatorColor.cgColor }
+
+  override func mouseDown(with event: NSEvent) { NSWorkspace.shared.open(URL(filePath: path)) }
+}
