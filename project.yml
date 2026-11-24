@@ -68,6 +68,7 @@ targets:
       - path: App/Log.swift
       - path: App/Markdown.swift
       - path: App/PermissionPrompt.swift
+      - path: App/ProjectsModel.swift
       - path: App/StatusModel.swift
       - path: App/StorageDiff.swift
       - path: App/ToolPhrases.swift
@@ -77,6 +78,8 @@ targets:
     dependencies:
       - package: ClaudeEngine
         product: ClaudeEngine
+      - package: ClaudeEngine
+        product: ClaudeWorkspace
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
