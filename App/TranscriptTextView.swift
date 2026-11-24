@@ -22,6 +22,34 @@ final class TranscriptTextView: NSTextView {
     if hypot(end.x - start.x, end.y - start.y) < 3 { onToggle(toggle) }
   }
 
+  private lazy var pointerArea = NSTrackingArea(rect: .zero, options: [.mouseMoved, .cursorUpdate, .activeInActiveApp, .inVisibleRect], owner: self)
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if !trackingAreas.contains(pointerArea) { addTrackingArea(pointerArea) }
+  }
+
+  /// The I-beam shows only over selectable text, and never over a tool sentence, since a click there toggles it.
+  override func resetCursorRects() {}
+
+  override func cursorUpdate(with event: NSEvent) { mouseMoved(with: event) }
+
+  override func mouseMoved(with event: NSEvent) {
+    let point = convert(event.locationInWindow, from: nil)
+    let hit = superview.flatMap { hitTest(convert(point, to: $0)) }
+    var isText = false
+
+    if hit === self {
+      isText = toggleId(at: point) == nil && isGlyph(at: point)
+    } else if let field = hit as? NSTextField {
+      isText = field.isSelectable
+    } else if let view = hit as? NSTextView {
+      isText = view.isSelectable
+    }
+
+    (isText ? NSCursor.iBeam : NSCursor.arrow).set()
+  }
+
   /// Cards are views inside the text, which the text's accessibility element leaves out, so their controls join its children.
   override func accessibilityChildren() -> [Any]? {
     func cards(in view: NSView) -> [NSView] { view.subviews.flatMap { $0 is any CardContent ? [$0] : cards(in: $0) } }
@@ -65,6 +93,16 @@ final class TranscriptTextView: NSTextView {
     guard let text = (hit.fragment.textElement as? NSTextParagraph)?.attributedString, text.length > 0 else { return nil }
 
     return text.attribute(.toggle, at: 0, effectiveRange: nil) as? String
+  }
+
+  /// Whether `point` is over a line's glyphs, not its margins, an empty line or an attached view.
+  private func isGlyph(at point: NSPoint) -> Bool {
+    guard let hit = fragment(at: point), let line = hit.fragment.textLineFragments.first(where: { $0.typographicBounds.contains(hit.local) }) else { return false }
+
+    let index = line.characterIndex(for: CGPoint(x: hit.local.x - line.typographicBounds.minX, y: hit.local.y - line.typographicBounds.minY))
+    guard index >= 0, index < line.attributedString.length else { return false }
+
+    return line.attributedString.attribute(.attachment, at: index, effectiveRange: nil) == nil
   }
 
   /// The character offset where the paragraph at `point` starts.
