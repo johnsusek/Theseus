@@ -10,6 +10,19 @@ enum RowStatus: Int, CaseIterable {
   var symbol: String { ["exclamationmark.triangle", "xmark.circle", "circle.dotted", "checkmark.circle", "moon.zzz"][rawValue] }
 }
 
+/// How recently a session must have been active to show, counted in calendar days with today as the first.
+enum UpdatedRange: Int, CaseIterable {
+  case anyTime, today, twoDays, week, month
+
+  var title: String { ["Any Time", "Today", "Last 2 Days", "Last 7 Days", "Last 30 Days"][rawValue] }
+
+  func start(now: Date, calendar: Calendar = .current) -> Date? {
+    guard self != .anyTime else { return nil }
+
+    return calendar.date(byAdding: .day, value: 1 - [0, 1, 2, 7, 30][rawValue], to: calendar.startOfDay(for: now))
+  }
+}
+
 /// What a waiting session asks for, which decides the control that answers it.
 enum RequestKind {
   case permission, question, plan
@@ -135,31 +148,34 @@ struct SessionGroup {
   let sessions: [Session]
 }
 
-/// What the Projects window shows: the status filter, the search field, Show Archived Sessions and the column sort.
+/// What the Projects window shows: the status filter (none picked shows every status), the Updated filter, the search field, Show Archived Sessions and the column sort.
 struct ProjectsQuery {
-  var filter: RowStatus?
+  var statuses: Set<RowStatus> = []
+  var updated = UpdatedRange.anyTime
   var showsArchived = false
   var search = ""
   var sortOrder = [NSSortDescriptor(key: "status", ascending: true), NSSortDescriptor(key: "updated", ascending: false)]
 
-  var isFiltered: Bool { filter != nil || !search.isEmpty }
+  var isFiltered: Bool { !statuses.isEmpty || updated != .anyTime || !search.isEmpty }
 
   /// A conversation that has written nothing and run no turn is an empty tab still starting, so it stays out of the list.
   @MainActor
-  func shows(_ session: Session) -> Bool {
+  func shows(_ session: Session, now: Date) -> Bool {
     guard session.transcriptFile != nil || !session.transcript.turns.isEmpty else { return false }
 
     guard showsArchived || !session.isArchived else { return false }
 
-    guard filter == nil || session.rowStatus == filter else { return false }
+    guard statuses.isEmpty || statuses.contains(session.rowStatus) else { return false }
+
+    if let start = updated.start(now: now), session.lastActive < start { return false }
 
     return search.isEmpty || session.rowTitle.localizedCaseInsensitiveContains(search) || session.project?.name.localizedCaseInsensitiveContains(search) == true
   }
 
   /// Pinned sessions on top, then each project's other sessions. A project with nothing shown keeps its row until a filter or a search hides it.
   @MainActor
-  func groups(_ projects: [Project]) -> [SessionGroup] {
-    let shown = projects.flatMap(\.sessions).filter(shows)
+  func groups(_ projects: [Project], now: Date = .now) -> [SessionGroup] {
+    let shown = projects.flatMap(\.sessions).filter { shows($0, now: now) }
     let keys = Dictionary(shown.map { (ObjectIdentifier($0), SortKeys($0)) }) { first, _ in first }
     let sorted = { (sessions: [Session]) in sessions.sorted { keys[ObjectIdentifier($0)]!.precedes(keys[ObjectIdentifier($1)]!, by: sortOrder) } }
     let pinned = SessionGroup(id: "pinned", project: nil, sessions: sorted(shown.filter(\.isPinned)))

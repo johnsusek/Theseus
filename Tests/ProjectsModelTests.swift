@@ -65,13 +65,33 @@ struct ProjectsModelTests {
 
     #expect(all[0].sessions.map(\.rowStatus) == [.closed, .failed, .closed])
     #expect(ids(query.groups(all)) == ["app: b c a"])
-    query.filter = .failed
+    query.statuses = [.failed]
     #expect(ids(query.groups(all)) == ["app: b"])
-    query.filter = .running
+    query.statuses = [.running]
     #expect(query.groups(all).isEmpty)
-    query.filter = nil
+    query.statuses = [.running, .failed]
+    #expect(ids(query.groups(all)) == ["app: b"])
+    query.statuses = [.failed, .closed]
+    #expect(ids(query.groups(all)) == ["app: b c a"])
+    query.statuses = []
     query.sortOrder = [NSSortDescriptor(key: "title", ascending: false)]
     #expect(ids(query.groups(all)) == ["app: c b a"])
+  }
+
+  @Test func updatedFilterCountsCalendarDays() throws {
+    // `now` is 08:00 UTC, so 20 hours ago is yesterday.
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+    let all = projects([("app", [("today", 60), ("yesterday", 60 * 20), ("lastWeek", 60 * 24 * 5), ("old", 60 * 24 * 40)])])
+    var query = ProjectsQuery()
+
+    #expect(UpdatedRange.anyTime.start(now: now, calendar: calendar) == nil)
+    #expect(UpdatedRange.today.start(now: now, calendar: calendar) == now.addingTimeInterval(-8 * 3600))
+    #expect(UpdatedRange.twoDays.start(now: now, calendar: calendar) == now.addingTimeInterval(-32 * 3600))
+    query.updated = .week
+    #expect(ids(query.groups(all, now: now)) == ["app: today yesterday lastWeek"])
+    query.updated = .anyTime
+    #expect(ids(query.groups(all, now: now)) == ["app: today yesterday lastWeek old"])
   }
 
   @Test func blankConversationsStayOut() throws {

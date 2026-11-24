@@ -110,11 +110,10 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
       item("Show Verbose Transcript", #selector(ConversationController.toggleVerboseTranscript(_:))),
       .separator(),
       item("Show Archived Sessions", #selector(ProjectsWindowController.toggleArchivedSessions(_:))),
-      menu("Filter", (["All Sessions"] + RowStatus.allCases.map(\.title)).enumerated().map { index, title in
-        let filter = item(title, #selector(ProjectsWindowController.filterSessions(_:)))
-        filter.tag = index
-        return filter
-      }),
+      menu("Filter", [item("All Sessions", #selector(ProjectsWindowController.filterSessions(_:)), tag: -1), .separator()]
+        + RowStatus.allCases.map { item($0.title, #selector(ProjectsWindowController.filterSessions(_:)), tag: $0.rawValue) }
+        + [.separator(), .sectionHeader(title: "Updated")]
+        + UpdatedRange.allCases.map { item($0.title, #selector(ProjectsWindowController.filterUpdated(_:)), tag: $0.rawValue) }),
       .separator(),
       item("Show Tab Bar", #selector(NSWindow.toggleTabBar(_:))),
       item("Show All Tabs", #selector(NSWindow.toggleTabOverview(_:)), "\\", [.command, .shift]),
@@ -160,18 +159,17 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
 }
 
 @MainActor
-private func item(_ title: String, _ action: Selector, _ key: String = "", _ modifiers: NSEvent.ModifierFlags = .command) -> NSMenuItem {
+private func item(_ title: String, _ action: Selector, _ key: String = "", _ modifiers: NSEvent.ModifierFlags = .command, tag: Int = 0) -> NSMenuItem {
   let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
   item.keyEquivalentModifierMask = modifiers
+  item.tag = tag
   return item
 }
 
 /// The text finder reads which command to run from the item's tag.
 @MainActor
 private func find(_ title: String, _ action: NSTextFinder.Action, _ key: String, _ modifiers: NSEvent.ModifierFlags = .command) -> NSMenuItem {
-  let found = item(title, #selector(NSResponder.performTextFinderAction(_:)), key, modifiers)
-  found.tag = action.rawValue
-  return found
+  item(title, #selector(NSResponder.performTextFinderAction(_:)), key, modifiers, tag: action.rawValue)
 }
 
 @MainActor

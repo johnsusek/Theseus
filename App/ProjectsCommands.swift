@@ -5,6 +5,7 @@ import ClaudeWorkspace
 extension NSToolbarItem.Identifier {
   static let newSession = NSToolbarItem.Identifier("newSession")
   static let statusFilter = NSToolbarItem.Identifier("statusFilter")
+  static let updatedFilter = NSToolbarItem.Identifier("updatedFilter")
   static let answer = NSToolbarItem.Identifier("answer")
   static let search = NSToolbarItem.Identifier("search")
 }
@@ -185,12 +186,27 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
     refresh()
   }
 
-  /// The toolbar's segments and View > Filter's items: 0 shows every session, the rest one status each.
+  /// The toolbar's segments and View > Filter's status items each toggle one status; Filter's All Sessions (tag -1) clears them.
   @objc func filterSessions(_ sender: Any?) {
-    let index = (sender as? NSSegmentedControl)?.selectedSegment ?? (sender as? NSMenuItem)?.tag ?? 0
+    if sender as? NSSegmentedControl === filter {
+      query.statuses = Set(RowStatus.allCases.filter { filter.isSelected(forSegment: $0.rawValue) })
+    } else if let status = RowStatus(rawValue: (sender as? NSMenuItem)?.tag ?? -1) {
+      query.statuses.formSymmetricDifference([status])
+    } else {
+      query.statuses = []
+    }
 
-    query.filter = index == 0 ? nil : RowStatus(rawValue: index - 1)
-    filter.selectedSegment = index
+    for status in RowStatus.allCases { filter.setSelected(query.statuses.contains(status), forSegment: status.rawValue) }
+
+    refresh()
+  }
+
+  /// The toolbar's Updated pop-up and View > Filter's date items, tagged by `UpdatedRange`.
+  @objc func filterUpdated(_ sender: Any?) {
+    let tag = (sender as? NSPopUpButton)?.selectedTag() ?? (sender as? NSMenuItem)?.tag ?? 0
+
+    query.updated = UpdatedRange(rawValue: tag) ?? .anyTime
+    updatedFilter.selectItem(withTag: tag)
     refresh()
   }
 
@@ -225,7 +241,11 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
       menuItem.title = query.showsArchived ? "Hide Archived Sessions" : "Show Archived Sessions"
       return true
     case #selector(filterSessions(_:)):
-      menuItem.state = menuItem.tag == filter.selectedSegment ? .on : .off
+      let isOn = RowStatus(rawValue: menuItem.tag).map(query.statuses.contains) ?? query.statuses.isEmpty
+      menuItem.state = isOn ? .on : .off
+      return true
+    case #selector(filterUpdated(_:)):
+      menuItem.state = menuItem.tag == query.updated.rawValue ? .on : .off
       return true
     default:
       return true
@@ -305,19 +325,26 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
     newItem.action = #selector(newSession(_:))
     newItem.showsIndicator = true
 
-    let statuses: [(String, String)] = [("tray.full", "All Sessions")] + RowStatus.allCases.map { ($0.symbol, $0.title) }
-    filter.segmentCount = statuses.count
-    filter.trackingMode = .selectOne
+    filter.segmentCount = RowStatus.allCases.count
+    filter.trackingMode = .selectAny
     filter.target = self
     filter.action = #selector(filterSessions(_:))
 
-    for (index, status) in statuses.enumerated() {
-      filter.setImage(NSImage(systemSymbolName: status.0, accessibilityDescription: status.1), forSegment: index)
-      filter.setToolTip(status.1, forSegment: index)
+    for status in RowStatus.allCases {
+      filter.setImage(NSImage(systemSymbolName: status.symbol, accessibilityDescription: status.title), forSegment: status.rawValue)
+      filter.setToolTip(status.title, forSegment: status.rawValue)
     }
 
-    filter.selectedSegment = 0
     filter.setAccessibilityLabel("Show Sessions by Status")
+
+    for range in UpdatedRange.allCases {
+      updatedFilter.addItem(withTitle: range.title)
+      updatedFilter.lastItem?.tag = range.rawValue
+    }
+
+    updatedFilter.target = self
+    updatedFilter.action = #selector(filterUpdated(_:))
+    updatedFilter.setAccessibilityLabel("Show Sessions by Last Update")
 
     for (item, symbol, title, action) in [(denyItem, "xmark", "Deny", #selector(denyRequest(_:))), (allowItem, "checkmark", "Allow", #selector(allowRequest(_:)))] {
       item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
@@ -339,7 +366,7 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
   }
 
   func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-    [.newSession, .statusFilter, .flexibleSpace, .answer, .search]
+    [.newSession, .statusFilter, .updatedFilter, .flexibleSpace, .answer, .search]
   }
 
   func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -355,6 +382,12 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
       item.view = filter
       item.label = "Show"
       item.toolTip = "Show Sessions by Status"
+      return item
+    case .updatedFilter:
+      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+      item.view = updatedFilter
+      item.label = "Updated"
+      item.toolTip = "Show Sessions by Last Update"
       return item
     case .answer:
       let group = NSToolbarItemGroup(itemIdentifier: itemIdentifier)

@@ -60,6 +60,7 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
   private weak var peeked: Session?
   private var ticker: Timer?
   let filter = NSSegmentedControl()
+  let updatedFilter = NSPopUpButton()
   let newItem = NSMenuToolbarItem(itemIdentifier: .newSession)
   let denyItem = NSToolbarItem(itemIdentifier: NSToolbarItem.Identifier("deny"))
   let allowItem = NSToolbarItem(itemIdentifier: NSToolbarItem.Identifier("allow"))
@@ -154,12 +155,12 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
 
   // MARK: Refresh
 
-  /// Keeps the outline current while the window is open, and the Updated column's relative times with it.
+  /// Keeps the outline current while the window is open, and the Updated column's relative times and the Updated filter with it.
   func watch() {
     watching += 1
     isWatching = true
     ticker?.invalidate()
-    ticker = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.reconfigureVisible() } }
+    ticker = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } }
     keepCurrent(self) { [generation = watching] controller in
       if controller.watching == generation { controller.refresh() }
     }
