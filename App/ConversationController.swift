@@ -8,7 +8,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private unowned let app: AppDelegate
   private let content = ConversationView()
   private let tabStatus = TabStatusView()
-  private var session: Session?
+  private(set) var session: Session?
   private var starting: Task<Session, any Error>?
   private var startFailed = false
   /// The last send, so prompts reach the CLI in the order they were typed.
@@ -35,14 +35,10 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private var agentList: AgentListController? { agentsPopover?.contentViewController as? AgentListController }
   private var changeList: ChangeListController? { changesPopover?.contentViewController as? ChangeListController }
 
-  /// The session's title, else its first prompt, cut to one line.
-  private var conversationTitle: String {
-    let source = session?.title ?? session?.transcript.turns.lazy.compactMap { $0.prompt?.text }.first ?? ""
-    let line = source.split(whereSeparator: \.isNewline).first?.trimmingCharacters(in: .whitespaces) ?? ""
-    return line.isEmpty ? "New Conversation" : line
-  }
+  private var conversationTitle: String { session?.rowTitle ?? "New Conversation" }
 
-  init(app: AppDelegate, project: URL) {
+  /// A blank conversation when `session` is nil, which starts its process at once; otherwise that session's conversation.
+  init(app: AppDelegate, project: URL, session existing: Session? = nil) {
     self.app = app
     self.project = project
     let panel = ConversationPanel(contentRect: NSRect(x: 0, y: 0, width: 720, height: 520), styleMask: [.titled, .closable, .miniaturizable, .resizable, .utilityWindow], backing: .buffered, defer: false)
@@ -73,7 +69,12 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.status.changes.target = self
     content.status.changes.action = #selector(showChanges(_:))
     content.status.menuItems = { [unowned self] button in button === content.status.model ? menuItems(.model, labeled: true) + menuItems(.effort, labeled: true) + [.separator(), pickItem("Fast Mode", #selector(toggleFastMode(_:)), nil)] : menuItems(.mode) }
-    start()
+
+    if let existing {
+      attach(existing)
+    } else {
+      start()
+    }
   }
 
   @available(*, unavailable)
@@ -150,17 +151,38 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     }
   }
 
-  /// Pushes the session's state into the window. Runs again whenever something it read changes.
-  private func refresh() {
-    guard let session, let live = session.live else { return }
+  /// Shows a conversation that already exists. Its history loads read-only, and the first send resumes it,
+  /// unless its process is still running, as it is for a conversation whose tab was closed.
+  private func attach(_ session: Session) {
+    self.session = session
+    hasSent = true
+    starting = Task { session }
 
-    let isWaiting = !live.pendingPermissions.isEmpty || live.state == .requiresAction
+    keepCurrent(self) { $0.refresh() }
+
+    Task {
+      do {
+        try await app.workspace.loadHistory(session)
+      } catch {
+        report(error, as: "The Conversation Could Not Be Loaded")
+      }
+    }
+  }
+
+  /// Pushes the session's state into the window. Runs again whenever something it read changes.
+  /// A conversation opened from its history has no process until its first send.
+  private func refresh() {
+    guard let session else { return }
+
+    let live = session.live
+    let requests = live?.pendingPermissions ?? []
+    let isWaiting = !requests.isEmpty || live?.state == .requiresAction
 
     retitle()
 
     if isWaiting {
       tabStatus.status = .needsInput
-    } else if live.state == .running {
+    } else if live?.state == .running {
       tabStatus.status = .running
     } else {
       tabStatus.status = .idle
@@ -174,33 +196,38 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.prompt.isBusy = isBusy
     content.prompt.textView.placeholder = session.transcript.turns.isEmpty && sent.isEmpty ? "Describe a task or ask a question" : "Reply"
 
-    let pending = live.pendingPermissions.map { PendingRequest(requestId: $0.requestId, toolUseId: $0.toolUseId) }
-    var input = TranscriptInput(transcript: session.transcript, streaming: live.streaming.blocks, tasks: live.taskList.tasks, pending: pending, isLive: live.isRunning, sent: sent)
+    let pending = requests.map { PendingRequest(requestId: $0.requestId, toolUseId: $0.toolUseId) }
+    let tasks = live?.taskList.tasks ?? TaskList(session.transcript).tasks
+    var input = TranscriptInput(transcript: session.transcript, streaming: live?.streaming.blocks ?? [], tasks: tasks, pending: pending, isLive: live?.isRunning ?? false, sent: sent)
     busySince = isBusy ? busySince ?? .now : nil
 
     if let busySince {
       let turn = session.transcript.turns.last.flatMap { $0.status == .running ? $0 : nil }
-      input.activity = Activity(text: activityLine(summary: live.activity, isWaiting: isWaiting, transcript: session.transcript), since: turn?.startedAt ?? busySince)
+      input.activity = Activity(text: activityLine(summary: live?.activity, isWaiting: isWaiting, transcript: session.transcript), since: turn?.startedAt ?? busySince)
     }
 
-    content.transcript.show(input, requests: live.pendingPermissions, projectName: project.lastPathComponent)
+    content.transcript.show(input, requests: requests, projectName: project.lastPathComponent)
     showStatus(session, live)
   }
 
   /// Fills the status row and whichever of its popovers is open.
-  private func showStatus(_ session: Session, _ live: LiveSession) {
+  private func showStatus(_ session: Session, _ live: LiveSession?) {
     let transcript = session.transcript
     var status = StatusRowState()
-
-    for issue in live.issues.dropFirst(loggedIssues) { log.error("\(issue)") }
-
-    loggedIssues = live.issues.count
     status.runningAgents = transcript.tasks.count { $0.kind == .agent && $0.status.isActive }
     status.showsAgents = status.runningAgents > 0 || agentsPopover != nil
     status.changedFiles = transcript.changedFiles.count
     status.added = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.added }
     status.removed = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.removed }
 
+    agentList?.rows = agentRows(transcript)
+    changeList?.rows = changeRows(transcript.changedFiles, base: session.workingDirectory)
+
+    guard let live else { return content.status.state = status }
+
+    for issue in live.issues.dropFirst(loggedIssues) { log.error("\(issue)") }
+
+    loggedIssues = live.issues.count
     status.hasSession = true
     status.model = modelName(live.modelInfo, id: live.model, among: live.initializeInfo?.models ?? [])
     status.effort = live.effort.map(effortName) ?? ""
@@ -208,8 +235,6 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     status.contextUsed = live.contextUsage?.totalTokens ?? 0
     status.contextMax = live.contextUsage?.maxTokens ?? 0
     content.status.state = status
-    agentList?.rows = agentRows(transcript)
-    changeList?.rows = changeRows(transcript.changedFiles, base: session.workingDirectory)
   }
 
   /// Sends the draft, waiting for the process if it is still starting and resuming the session if its process has exited.

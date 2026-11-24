@@ -89,6 +89,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     NSDocumentController.shared.noteNewRecentDocumentURL(project)
   }
 
+  /// Brings the session's tab forward, or opens it as a new tab in its project's window.
+  func showConversation(_ session: Session) {
+    if let open = conversations.first(where: { $0.session === session }) { return open.window?.makeKeyAndOrderFront(nil) ?? () }
+
+    let controller = ConversationController(app: self, project: session.project?.path ?? session.workingDirectory, session: session)
+    conversations.append(controller)
+    controller.open()
+  }
+
   func closed(_ controller: ConversationController) {
     conversations.removeAll { $0 === controller }
   }
