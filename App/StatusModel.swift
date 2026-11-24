@@ -129,6 +129,16 @@ func activityLine(summary: String?, isWaiting: Bool, transcript: Transcript) -> 
   return running.map { toolActivity($0.name, input: $0.input) } ?? "Thinking"
 }
 
+/// The app another process that has a session open runs in, from the CLI's entrypoint.
+func ownerName(entrypoint: String?) -> String {
+  switch entrypoint {
+  case "cli": "a terminal"
+  case "claude-desktop": "the Claude app"
+  case "claude-vscode": "VS Code"
+  default: "another app"
+  }
+}
+
 /// The name a model goes by in the row. The CLI's default entry is "Default (recommended)", so it takes the name of the model it resolves to.
 func modelName(_ model: InitializeInfo.Model?, id: String?, among models: [InitializeInfo.Model]) -> String {
   guard let model else { return id ?? "Unknown Model" }

@@ -32,7 +32,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private var preview: PreviewWindowController?
 
   private var frameName: String { "Project \(project.path)" }
-  private var isBusy: Bool { session?.live.map { $0.state != .idle } ?? false }
+  private var isBusy: Bool { session?.live.map { $0.state != .idle } == true || session?.owner?.isBusy == true }
   private var agentList: AgentListController? { agentsPopover?.contentViewController as? AgentListController }
   private var changeList: ChangeListController? { changesPopover?.contentViewController as? ChangeListController }
 
@@ -178,14 +178,15 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     guard let session else { return }
 
     let live = session.live
+    let owner = session.owner
     let requests = live?.pendingPermissions ?? []
-    let isWaiting = !requests.isEmpty || live?.state == .requiresAction
+    let isWaiting = !requests.isEmpty || live?.state == .requiresAction || owner?.status == "waiting"
 
     retitle()
 
     if isWaiting {
       tabStatus.status = .needsInput
-    } else if live?.state == .running {
+    } else if live?.state == .running || owner?.isBusy == true {
       tabStatus.status = .running
     } else {
       tabStatus.status = .idle
@@ -196,12 +197,20 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
       sent.removeAll { echoed.contains($0.uuid) }
     }
 
-    content.prompt.isBusy = isBusy
-    content.prompt.textView.placeholder = session.transcript.turns.isEmpty && sent.isEmpty ? "Describe a task or ask a question" : "Reply"
+    // Stop is only for this app's own process.
+    content.prompt.isBusy = isBusy && owner == nil
+    content.prompt.isLocked = owner != nil
+    content.transcript.canReply = owner == nil
+
+    if let owner {
+      content.prompt.textView.placeholder = "Running in " + ownerName(entrypoint: owner.entrypoint)
+    } else {
+      content.prompt.textView.placeholder = session.transcript.turns.isEmpty && sent.isEmpty ? "Describe a task or ask a question" : "Reply"
+    }
 
     let pending = requests.map { PendingRequest(requestId: $0.requestId, toolUseId: $0.toolUseId) }
     let tasks = live?.taskList.tasks ?? TaskList(session.transcript).tasks
-    var input = TranscriptInput(transcript: session.transcript, streaming: live?.streaming.blocks ?? [], tasks: tasks, pending: pending, isLive: live?.isRunning ?? false, sent: sent)
+    var input = TranscriptInput(transcript: session.transcript, streaming: live?.streaming.blocks ?? [], tasks: tasks, pending: pending, isLive: live?.isRunning == true || owner != nil, sent: sent)
     busySince = isBusy ? busySince ?? .now : nil
 
     if let busySince {

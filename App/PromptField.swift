@@ -13,6 +13,16 @@ final class PromptField: NSView, NSTextViewDelegate {
     }
   }
 
+  /// Another process has the session open, so nothing can be typed or sent.
+  var isLocked = false {
+    didSet {
+      guard isLocked != oldValue else { return }
+
+      textView.isEditable = !isLocked
+      updateButton()
+    }
+  }
+
   var draft: String {
     get { textView.string }
     set {
@@ -123,7 +133,7 @@ final class PromptField: NSView, NSTextViewDelegate {
     button.contentTintColor = tint
     button.toolTip = label
     button.setAccessibilityLabel(label)
-    button.isEnabled = stops || !isDraftEmpty
+    button.isEnabled = !isLocked && (stops || !isDraftEmpty)
   }
 
   @objc private func pressButton() {

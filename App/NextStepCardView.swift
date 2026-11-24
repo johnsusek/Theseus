@@ -11,13 +11,21 @@ final class NextStepCardView: NSView, CardContent {
   private let buttons: [NSButton]
   private let reply: (String) -> Void
 
+  /// Off while another process has the session open.
+  var canReply: Bool {
+    didSet {
+      for button in buttons { button.isEnabled = canReply }
+    }
+  }
+
   override var isFlipped: Bool { true }
 
-  init(step: NextStep, reply: @escaping (String) -> Void) {
+  init(step: NextStep, canReply: Bool, reply: @escaping (String) -> Void) {
     recap = NSTextField(wrappingLabelWithString: step.recap)
     ask = step.ask.map { NSTextField(wrappingLabelWithString: $0) }
     buttons = step.ask != nil ? step.actions.reversed().map { NSButton(title: $0, target: nil, action: nil) } : []
     self.reply = reply
+    self.canReply = canReply
     super.init(frame: .zero)
 
     recap.font = NSFont.systemFont(ofSize: 13)
@@ -29,6 +37,7 @@ final class NextStepCardView: NSView, CardContent {
     for button in buttons {
       button.target = self
       button.action = #selector(pressed(_:))
+      button.isEnabled = canReply
     }
 
     for view in [recap, ask].compactMap({ $0 }) + buttons { addSubview(view) }

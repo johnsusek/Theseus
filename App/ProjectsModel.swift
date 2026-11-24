@@ -27,8 +27,14 @@ extension Session {
   /// The oldest request the running process waits on.
   var request: PermissionRequest? { live?.isRunning == true ? live?.pendingPermissions.first : nil }
 
-  /// Closed without a process; finished once a process is up and idle; failed when the last turn failed or the process died.
+  /// Closed without a process; finished once a process, here or in another app, is up and idle; failed when the last turn failed or the process died.
   var rowStatus: RowStatus {
+    if let owner {
+      if owner.status == "waiting" { return .waiting }
+
+      return owner.isBusy ? .running : .finished
+    }
+
     guard let live else { return transcript.turns.last?.status == .failed ? .failed : .closed }
 
     if live.isRunning, request != nil || live.state == .requiresAction { return .waiting }

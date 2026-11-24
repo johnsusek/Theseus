@@ -12,6 +12,15 @@ final class TranscriptView: NSView {
   /// A next-step card's button, whose title is the reply.
   var onReply: (String) -> Void = { _ in }
 
+  /// Off while another process has the session open, which turns off the next-step card's buttons.
+  var canReply = true {
+    didSet {
+      guard canReply != oldValue else { return }
+
+      for card in views(NextStepCardView.self) { card.canReply = canReply }
+    }
+  }
+
   /// Space kept clear under the last line, for the prompt field floating over the bottom edge.
   var bottomInset = 0.0 {
     didSet {
@@ -227,7 +236,7 @@ final class TranscriptView: NSView {
 
       return ViewAttachment { [unowned self] in TurnFooterView(footer: footer, turn: turn, isShown: turn == hoveredTurn) }
     case .nextStep(let step):
-      return ViewAttachment { [unowned self] in NextStepCardView(step: step) { [unowned self] in onReply($0) } }
+      return ViewAttachment { [unowned self] in NextStepCardView(step: step, canReply: canReply) { [unowned self] in onReply($0) } }
     case .permission(let requestId):
       guard let request = requests.first(where: { $0.requestId == requestId }) else { return NSTextAttachment() }
 

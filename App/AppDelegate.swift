@@ -27,6 +27,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     UNUserNotificationCenter.current().delegate = self
 
+    // Follows the sessions a terminal or another app has open.
+    Task {
+      while true {
+        await workspace.readOwners()
+        try? await Task.sleep(for: .seconds(1))
+      }
+    }
+
     if UserDefaults.standard.bool(forKey: "ProjectsOpen") { return showProjects(nil) }
 
     rescan()
