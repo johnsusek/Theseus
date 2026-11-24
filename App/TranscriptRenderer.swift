@@ -84,7 +84,7 @@ struct TranscriptRenderer {
       return [line(content, toggle: group.id)]
     case .detail(let blocks):
       return detail(blocks, inset: inset)
-    case .tasks, .permission:
+    case .tasks, .permission, .nextStep:
       return [line(NSAttributedString(attachment: card(element)))]
     case .footer(let text):
       return [line(TranscriptStyle.text(text, font: TranscriptStyle.calloutDigits, color: .secondaryLabelColor))]

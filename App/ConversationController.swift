@@ -66,6 +66,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.prompt.onStop = { [unowned self] in stopSession(nil) }
     content.transcript.onDecision = { [unowned self] request, decision in session?.live?.respond(to: request, with: decision) }
     content.transcript.onLink = { [unowned self] link in openLink(link) }
+    content.transcript.onReply = { [unowned self] text in send(text) }
     content.status.agents.target = self
     content.status.agents.action = #selector(showAgents(_:))
     content.status.changes.target = self
@@ -245,8 +246,12 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     let text = content.prompt.draft.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return }
 
-    let prompt = SentPrompt(uuid: UUID().uuidString.lowercased(), text: text)
     content.prompt.draft = ""
+    send(text)
+  }
+
+  private func send(_ text: String) {
+    let prompt = SentPrompt(uuid: UUID().uuidString.lowercased(), text: text)
     sent.append(prompt)
     refresh()
 

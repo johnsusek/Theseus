@@ -11,6 +11,7 @@ enum HostTools {
     You are running inside Theseus, a native macOS app that shows this conversation as a styled transcript.
     - When you mention a file, write it as a markdown link whose target is the path relative to the working directory, with an optional :line suffix, for example [Markdown.swift](App/Markdown.swift:42). The user can click it to open the file.
     - Theseus has a preview window that renders files. When the user asks to see, show, open, view or read a file, call show_file with its path and do not paste the file's contents into your reply; a one-line pointer to the file is enough. Do the same for a file you wrote for the user to read, such as a report or a plan.
+    - End every turn in which you changed files, ran commands or did multi-step work with a call to wrap_up, then write your closing message after it. Theseus draws its recap under the turn, with the question and reply buttons when the user has a decision to make. Skip it for short answers and conversation.
     - Call notify only when a task that ran for several minutes finishes or when you are blocked on the user's answer, since they may have switched to another app.
     """
 
@@ -18,8 +19,8 @@ enum HostTools {
 
   static func servers(for session: Session, app: AppDelegate) -> [HostServer] {
     /// A tool whose body runs on the main actor with the session. The session can close while the CLI still holds the tool.
-    func tool(_ name: String, _ description: String, _ properties: [String: JSONValue] = [:], asksPermission: Bool = false, _ body: @escaping @MainActor @Sendable (HostToolCall, Session) async throws -> String) -> HostTool {
-      let schema: JSONValue = ["type": "object", "properties": .object(properties), "required": .array(properties.keys.filter { $0 != "reason" }.sorted().map(JSONValue.string))]
+    func tool(_ name: String, _ description: String, _ properties: [String: JSONValue] = [:], optional: Set<String> = [], asksPermission: Bool = false, _ body: @escaping @MainActor @Sendable (HostToolCall, Session) async throws -> String) -> HostTool {
+      let schema: JSONValue = ["type": "object", "properties": .object(properties), "required": .array(properties.keys.filter { !optional.contains($0) }.sorted().map(JSONValue.string))]
 
       return HostTool(name: name, description: description, inputSchema: schema, asksPermission: asksPermission) { [weak session] call in
         guard let session else { throw ToolFailure("The session has closed.") }
@@ -97,7 +98,7 @@ enum HostTools {
         try await live.setEffort(level)
         return "Effort set to \(effortName(level))."
       },
-      tool("set_permission_mode", "Asks the user to switch this session's permission mode.", ["mode": ["type": "string", "enum": ["default", "acceptEdits", "plan", "auto"]], "reason": ["type": "string", "description": "One sentence the user reads before approving."]], asksPermission: true) { call, session in
+      tool("set_permission_mode", "Asks the user to switch this session's permission mode.", ["mode": ["type": "string", "enum": ["default", "acceptEdits", "plan", "auto"]], "reason": ["type": "string", "description": "One sentence the user reads before approving."]], optional: ["reason"], asksPermission: true) { call, session in
         let live = try live(session)
         let mode = PermissionMode(rawValue: try call.string("mode"))
         guard [.default, .acceptEdits, .plan, .auto].contains(mode) else { throw ToolFailure("Choose default, acceptEdits, plan or auto.") }
@@ -105,6 +106,9 @@ enum HostTools {
 
         try await live.setPermissionMode(mode)
         return "Permission mode set to \(modeName(mode))."
+      },
+      tool("wrap_up", "Puts a recap of this turn's work under the turn, with one question and reply buttons when the user has a decision to make.", ["recap": ["type": "string", "description": "Two or three sentences to the user: what is now true or changed, and what is not done or not verified."], "ask": ["type": "string", "description": "One short question the user must answer, if any."], "actions": ["type": "array", "items": ["type": "string"], "maxItems": 2, "description": "With ask: one to three word answers the user can click, your recommendation first."]], optional: ["ask", "actions"]) { _, _ in
+        "Shown. Now write your closing message."
       },
       tool("set_title", "Renames this conversation in Theseus's tabs and session lists.", ["title": ["type": "string"]]) { [weak app] call, session in
         let title = try call.string("title").trimmingCharacters(in: .whitespacesAndNewlines)

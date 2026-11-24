@@ -29,7 +29,26 @@ struct TranscriptBuilderTests {
     ])
   }
 
-  @Test func stoppedTurnSaysSoInItsFooter() throws {
+  @Test func wrapUpBecomesACardAfterTheTurnsReplies() throws {
+    let wrapUp: JSONValue = ["recap": "Preview added.", "ask": "Commit it?", "actions": ["Commit", "Not yet", "Later"]]
+    let frames = [prompt("Add a preview"), call("t1", wrapUpToolName, wrapUp), returned("t1", "Shown."), said("Added the preview."), finished()]
+    var builder = makeBuilder()
+    let open = builder.elements(for: TranscriptInput(transcript: try transcript(frames), isLive: true)).map(\.shape)
+    let answered = builder.elements(for: TranscriptInput(transcript: try transcript(frames), isLive: true, sent: [SentPrompt(uuid: "u", text: "Commit")])).map(\.shape)
+
+    #expect(open == ["prompt(Add a preview)", "reply(Added the preview.)", "next(Preview added. | Commit it? [\"Commit\", \"Not yet\"])", "footer(1m 52s)"])
+    #expect(answered.contains("next(Preview added.)"))
+  }
+
+  @Test func onlyTheLastTurnKeepsItsQuestionOpen() throws {
+    let wrapUp: JSONValue = ["recap": "Done.", "ask": "Push?", "actions": ["Push"]]
+    let shown = shapes(try transcript([prompt("One"), call("t1", wrapUpToolName, wrapUp), returned("t1", "Shown."), finished(), prompt("Two", at: "10:05:00"), said("Ok."), finished()]))
+
+    #expect(shown.contains("next(Done.)"))
+    #expect(!shown.contains { $0.hasPrefix("tool(") })
+  }
+
+    @Test func stoppedTurnSaysSoInItsFooter() throws {
     let interrupted: JSONValue = ["type": "user", "uuid": "i1", "message": ["role": "user", "content": [["type": "text", "text": "[Request interrupted by user]"]]], "parent_tool_use_id": nil]
     var builder = makeBuilder()
     let elements = builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go"), said("Half a"), interrupted, finished()])))

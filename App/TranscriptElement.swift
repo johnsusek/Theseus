@@ -76,6 +76,7 @@ struct TranscriptElement: Equatable, Identifiable {
     case detail([DetailBlock])
     case tasks([TaskItem])
     case permission(requestId: String)
+    case nextStep(NextStep)
     case footer(String)
   }
 
@@ -84,6 +85,25 @@ struct TranscriptElement: Equatable, Identifiable {
   /// Points of space above.
   var spacing = 12.0
   var box: BoxSlot?
+}
+
+/// The model's `wrap_up` call, which the transcript draws as a card under its turn instead of a tool row.
+let wrapUpToolName = "mcp__theseus__wrap_up"
+
+/// A turn's recap, with a question and reply buttons while it is the last thing in the conversation.
+struct NextStep: Equatable {
+  var recap: String
+  var ask: String?
+  var actions: [String]
+  /// Its turn is the last one and nothing has been sent since, so the question is still open.
+  var isOpen: Bool
+
+  init(input: JSONValue, isOpen: Bool) {
+    recap = input["recap"]?.string ?? ""
+    ask = input["ask"]?.string.flatMap { $0.allSatisfy(\.isWhitespace) ? nil : $0 }
+    actions = Array((input["actions"]?.array ?? []).compactMap(\.string).prefix(2))
+    self.isOpen = isOpen
+  }
 }
 
 /// A permission prompt waiting for an answer.
@@ -143,6 +163,7 @@ struct TranscriptBuilder {
     var lastItemId: String?
     var status: Turn.Status
     var isRunning: Bool
+    var isLatest: Bool
     var tasks: [TaskItem]
     var pending: [PendingRequest]
     /// A footer names the day unless it is today.
@@ -183,6 +204,8 @@ struct TranscriptBuilder {
     var agents: [String: ClaudeTask]
     /// The turn being built can still get results for its calls.
     var isRunning = false
+    /// The turn being built is the last one, finished, with nothing sent after it.
+    var isLatest = false
   }
 
   /// Opens or closes a row or group, or shows or hides the rest of a capped output.
@@ -206,10 +229,12 @@ struct TranscriptBuilder {
 
     for (index, turn) in turns.enumerated() {
       let isRunning = index == turns.count - 1 && input.isLive && turn.status == .running
-      let key = TurnKey(range: turn.messageRange, lastItemId: turn.items.last?.id, status: turn.status, isRunning: isRunning, tasks: isRunning ? input.tasks : [], pending: input.pending, today: today)
+      let isLatest = index == turns.count - 1 && !isRunning && input.sent.isEmpty
+      let key = TurnKey(range: turn.messageRange, lastItemId: turn.items.last?.id, status: turn.status, isRunning: isRunning, isLatest: isLatest, tasks: isRunning ? input.tasks : [], pending: input.pending, today: today)
       var built: BuiltTurn
 
       context.isRunning = isRunning
+      context.isLatest = isLatest
       isQueuedBehind = isRunning && turn.prompt != nil
 
       if isRunning, !input.streaming.isEmpty {
@@ -273,6 +298,15 @@ struct TranscriptBuilder {
     built.agentIds = body.agentIds
     built.openCallIds = body.openCallIds
 
+    let wrapUp = turn.items.reversed().lazy.compactMap { item -> ToolCall? in
+      guard case .toolCall(let callId) = item.content else { return nil }
+      return context.transcript.toolCall(callId).flatMap { $0.name == wrapUpToolName ? $0 : nil }
+    }.first
+
+    if let wrapUp {
+      built.elements.append(TranscriptElement(id: "\(turn.id)/next", kind: .nextStep(NextStep(input: wrapUp.input, isOpen: context.isLatest))))
+    }
+
     if turn.status != .running, let footer = footer(for: turn, in: context.transcript) {
       built.elements.append(TranscriptElement(id: "\(turn.id)/footer", kind: .footer(footer)))
     }
@@ -308,7 +342,7 @@ struct TranscriptBuilder {
       case .thinking(let text):
         if isVerbose, !text.allSatisfy(\.isWhitespace) { entries.append(.thought(id: id, text: text)) }
       case .toolCall(let callId):
-        if let call = context.transcript.toolCall(callId) { entries.append(.tool(id: callId, name: call.name, input: call.input, call: call)) }
+        if let call = context.transcript.toolCall(callId), call.name != wrapUpToolName { entries.append(.tool(id: callId, name: call.name, input: call.input, call: call)) }
       case .prompt(let blocks, let origin):
         if !blocks.text.allSatisfy(\.isWhitespace) { entries.append(.prompt(id: id, text: blocks.text, origin: origin)) }
       }
@@ -322,6 +356,8 @@ struct TranscriptBuilder {
         if !text.allSatisfy(\.isWhitespace) { entries.append(.reply(id: id, text: text)) }
       case .thinking(let text):
         if isVerbose, !text.allSatisfy(\.isWhitespace) { entries.append(.thought(id: id, text: text)) }
+      case .toolUse(_, wrapUpToolName, _):
+        break
       case .toolUse(let callId, let name, let partialInput):
         // The input JSON rarely parses before the block ends, and the row needs none of it to say what is running.
         entries.append(.tool(id: callId, name: name, input: (try? JSONValue(parsing: Data(partialInput.utf8))) ?? [:], call: nil))
