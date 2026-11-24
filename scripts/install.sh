@@ -18,9 +18,9 @@ if ! xcodebuild -project Theseus.xcodeproj -scheme Theseus -configuration Debug 
   exit 1
 fi
 
-pkill -x Theseus 2>/dev/null || true
+pkill -U "$(id -u)" -x Theseus 2>/dev/null || true
 # Opening the app while the old copy is still quitting fails with error -600.
-while pgrep -x Theseus >/dev/null; do sleep 0.1; done
+while pgrep -U "$(id -u)" -x Theseus >/dev/null; do sleep 0.1; done
 rm -rf "$installed"
 ditto "$app" "$installed"
 open "$installed"
