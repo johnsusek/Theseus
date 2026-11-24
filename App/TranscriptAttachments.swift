@@ -90,3 +90,37 @@ final class StatusMarkView: NSImageView, ActiveAppearing {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("StatusMarkView is built in code") }
 }
+
+/// The running turn's timer, which counts up by itself so the transcript's text does not change every second.
+final class ClockView: NSTextField {
+  static let font = TranscriptStyle.digits
+  /// Room for "0:00:00", so the view keeps its size past an hour.
+  static let size = NSSize(width: ceil(NSAttributedString(string: "0:00:00", attributes: [.font: font]).size().width) + 4, height: 17)
+
+  private let since: Date
+  private var ticker: Task<Void, Never>?
+
+  init(since: Date) {
+    self.since = since
+    super.init(frame: .zero)
+    isEditable = false
+    isSelectable = false
+    isBordered = false
+    drawsBackground = false
+    font = Self.font
+    textColor = .secondaryLabelColor
+    setAccessibilityLabel("Elapsed")
+    tick()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("ClockView is built in code") }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    ticker?.cancel()
+    ticker = window == nil ? nil : everySecond(self) { $0.tick() }
+  }
+
+  private func tick() { stringValue = timerText(max(Int(Date.now.timeIntervalSince(since)), 0)) }
+}

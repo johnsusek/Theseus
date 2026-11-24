@@ -71,6 +71,7 @@ final class TranscriptView: NSView {
     renderer.mark = { [unowned self] mark in
       ViewAttachment(size: NSSize(width: 18, height: 14)) { [state = layoutDelegate.state] in StatusMarkView(mark, isActive: state.isActive) }
     }
+    renderer.clock = { since in ViewAttachment(size: ClockView.size) { ClockView(since: since) } }
 
     scrollView.documentView = textView
     scrollView.drawsBackground = false

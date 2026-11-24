@@ -1,8 +1,8 @@
 import AppKit
 
-/// The row under the prompt. Left: the agents badge, the changes chip and what the session is doing.
+/// The row under the prompt. Left: the agents badge and the changes chip.
 /// Right: the model and permission mode menus and how full the context is.
-/// It lays itself out by hand, so a narrow window cuts the activity text short and then clips the row instead of growing.
+/// It lays itself out by hand, so a narrow window clips the row instead of growing.
 final class StatusRowView: NSView {
   let agents = StatusChip()
   let changes = StatusChip()
@@ -20,11 +20,7 @@ final class StatusRowView: NSView {
   private static let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
   private static let digits = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
   private static let spacing = 12.0
-  private let ellipsis = NSImageView()
-  private let activity = NSTextField(labelWithString: "")
-  private let timer = NSTextField(labelWithString: "")
   private let context = NSProgressIndicator()
-  private var ticker: Task<Void, Never>?
   private var isActive = false
 
   init() {
@@ -33,19 +29,6 @@ final class StatusRowView: NSView {
 
     agents.setAccessibilityLabel("Agents")
     changes.setAccessibilityLabel("Changes")
-
-    ellipsis.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "Working")?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .regular))
-    ellipsis.contentTintColor = .secondaryLabelColor
-
-    if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { ellipsis.addSymbolEffect(.variableColor.iterative, options: .repeating) }
-
-    activity.font = Self.font
-    activity.textColor = .secondaryLabelColor
-    activity.lineBreakMode = .byTruncatingTail
-    activity.allowsExpansionToolTips = true
-    timer.font = Self.digits
-    timer.textColor = .secondaryLabelColor
-    timer.setAccessibilityLabel("Elapsed")
 
     for (menu, tip) in [(model, "Model and Effort"), (mode, "Permission Mode")] {
       menu.isBordered = false
@@ -63,7 +46,7 @@ final class StatusRowView: NSView {
     context.maxValue = 1
     context.setAccessibilityLabel("Context")
 
-    for view in [agents, changes, ellipsis, activity, timer, model, mode, context] { addSubview(view) }
+    for view in [agents, changes, model, mode, context] { addSubview(view) }
 
     apply()
   }
@@ -83,7 +66,6 @@ final class StatusRowView: NSView {
   }
 
   private func apply() {
-    let isBusy = state.activity != nil
     let title = NSMutableAttributedString(string: state.model, attributes: [.font: Self.font, .foregroundColor: NSColor.labelColor])
 
     if !state.effort.isEmpty { title.append(NSAttributedString(string: " " + state.effort, attributes: [.font: Self.font, .foregroundColor: NSColor.secondaryLabelColor])) }
@@ -99,18 +81,6 @@ final class StatusRowView: NSView {
     changes.toolTip = state.changesTooltip
     changes.setAccessibilityValue("\(state.changesTooltip), \(state.added) lines added, \(state.removed) removed")
 
-    for view in [ellipsis, activity, timer] { view.isHidden = !isBusy }
-
-    activity.stringValue = state.activity ?? ""
-    tick()
-
-    if isBusy, ticker == nil {
-      ticker = everySecond(self) { $0.tick() }
-    } else if !isBusy {
-      ticker?.cancel()
-      ticker = nil
-    }
-
     model.isHidden = !state.hasSession
     model.menu?.items.first?.attributedTitle = title
     mode.isHidden = !state.hasSession
@@ -121,16 +91,6 @@ final class StatusRowView: NSView {
     context.toolTip = state.contextTooltip()
     needsLayout = true
     needsDisplay = true
-  }
-
-  private func tick() {
-    let text = state.busySince.map { timerText(max(Int(Date.now.timeIntervalSince($0)), 0)) } ?? ""
-    guard text != timer.stringValue else { return }
-
-    // The digits are monospaced, so only another digit changes the width.
-    if text.count != timer.stringValue.count { needsLayout = true }
-
-    timer.stringValue = text
   }
 
   /// A pull-down's first item is its title. The rest are built when the menu opens, so they are current.
@@ -156,18 +116,7 @@ final class StatusRowView: NSView {
     }
 
     // The right side keeps its place until the left side needs the room, then it slides out under the clip.
-    let rightStart = max(bounds.width - rightWidth, x)
-    let room = rightStart - 8 - x
-    let dots = ellipsis.intrinsicContentSize
-    // A label's fitting size has the cell's padding, which its intrinsic size leaves out.
-    let clock = timer.fittingSize
-    let text = activity.fittingSize
-    let words = max(min(text.width, room - dots.width - clock.width - 10), 0)
-
-    ellipsis.frame = room >= dots.width ? centered(x: x, dots) : .zero
-    activity.frame = words > 0 ? centered(x: x + dots.width + 5, NSSize(width: words, height: text.height)) : .zero
-    timer.frame = room >= dots.width + 5 + clock.width ? centered(x: x + dots.width + 5 + (words > 0 ? words + 5 : 0), clock) : .zero
-    x = rightStart
+    x = max(bounds.width - rightWidth, x)
 
     for item in right {
       item.view.frame = centered(x: x - item.shown.lowerBound, item.size)

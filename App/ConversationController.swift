@@ -174,33 +174,32 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.prompt.isBusy = isBusy
     content.prompt.textView.placeholder = session.transcript.turns.isEmpty && sent.isEmpty ? "Describe a task or ask a question" : "Reply"
 
-    let place = [session.worktree ?? project.lastPathComponent, session.gitBranch].compactMap { $0 }.joined(separator: " \u{B7} ")
     let pending = live.pendingPermissions.map { PendingRequest(requestId: $0.requestId, toolUseId: $0.toolUseId) }
-    let input = TranscriptInput(header: "Started in \(place)", transcript: session.transcript, streaming: live.streaming.blocks, tasks: live.taskList.tasks, pending: pending, isLive: live.isRunning, sent: sent)
+    var input = TranscriptInput(transcript: session.transcript, streaming: live.streaming.blocks, tasks: live.taskList.tasks, pending: pending, isLive: live.isRunning, sent: sent)
+    busySince = isBusy ? busySince ?? .now : nil
+
+    if let busySince {
+      let turn = session.transcript.turns.last.flatMap { $0.status == .running ? $0 : nil }
+      input.activity = Activity(text: activityLine(summary: live.activity, isWaiting: isWaiting, transcript: session.transcript), since: turn?.startedAt ?? busySince)
+    }
+
     content.transcript.show(input, requests: live.pendingPermissions, projectName: project.lastPathComponent)
-    showStatus(session, live, isWaiting: isWaiting)
+    showStatus(session, live)
   }
 
   /// Fills the status row and whichever of its popovers is open.
-  private func showStatus(_ session: Session, _ live: LiveSession, isWaiting: Bool) {
+  private func showStatus(_ session: Session, _ live: LiveSession) {
     let transcript = session.transcript
     var status = StatusRowState()
 
     for issue in live.issues.dropFirst(loggedIssues) { log.error("\(issue)") }
 
     loggedIssues = live.issues.count
-    busySince = isBusy ? busySince ?? .now : nil
     status.runningAgents = transcript.tasks.count { $0.kind == .agent && $0.status.isActive }
     status.showsAgents = status.runningAgents > 0 || agentsPopover != nil
     status.changedFiles = transcript.changedFiles.count
     status.added = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.added }
     status.removed = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.removed }
-
-    if isBusy {
-      let turn = transcript.turns.last.flatMap { $0.status == .running ? $0 : nil }
-      status.activity = activityLine(summary: live.activity, isWaiting: isWaiting, transcript: transcript)
-      status.busySince = turn?.startedAt ?? busySince
-    }
 
     status.hasSession = true
     status.model = modelName(live.modelInfo, id: live.model, among: live.initializeInfo?.models ?? [])

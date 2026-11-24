@@ -62,7 +62,6 @@ struct BoxSlot: Equatable {
 /// and replaces only the elements that changed.
 struct TranscriptElement: Equatable, Identifiable {
   enum Kind: Equatable {
-    case header(String)
     case prompt(String)
     /// A turn something other than a person started.
     case notice(symbol: String, text: String, source: String)
@@ -70,8 +69,8 @@ struct TranscriptElement: Equatable, Identifiable {
     case reply(String)
     /// A thinking block, shown in a verbose transcript.
     case thought(String)
-    /// Claude is thinking right now.
-    case thinking
+    /// What the running turn is doing, and when it started.
+    case activity(text: String, since: Date)
     case tool(ToolRow)
     case group(GroupRow)
     case detail([DetailBlock])
@@ -100,7 +99,6 @@ struct SentPrompt: Equatable {
 }
 
 struct TranscriptInput {
-  var header = ""
   var transcript = Transcript()
   var streaming: [StreamingMessage.Block] = []
   var tasks: [TaskItem] = []
@@ -109,6 +107,13 @@ struct TranscriptInput {
   var isLive = false
   /// Shown after everything else until their echo arrives, so a prompt appears when it is sent, also one queued behind a running turn.
   var sent: [SentPrompt] = []
+  /// Shown under the running turn while the session is busy.
+  var activity: Activity?
+}
+
+struct Activity: Equatable {
+  var text: String
+  var since: Date
 }
 
 /// Turns a transcript into elements. Finished turns are kept between calls, so a streaming reply rebuilds only the last turn.
@@ -162,7 +167,6 @@ struct TranscriptBuilder {
   private enum Entry {
     case reply(id: String, text: String)
     case thought(id: String, text: String)
-    case thinking(id: String)
     case prompt(id: String, text: String, origin: String?)
     case tool(id: String, name: String, input: JSONValue, call: ToolCall?)
 
@@ -194,9 +198,11 @@ struct TranscriptBuilder {
     let turns = input.transcript.turns
     var context = Context(transcript: input.transcript, pending: input.pending, agents: Dictionary(input.transcript.tasks.map { ($0.id, $0) }) { first, _ in first })
     let today = calendar.startOfDay(for: .now)
-    var elements = [TranscriptElement(id: "header", kind: .header(input.header), spacing: 0)]
+    var elements: [TranscriptElement] = []
     var placed: Set<String> = []
     var streamed = false
+    // Sent prompts are queued behind the running turn only once that turn shows its own prompt. `system/init` opens a turn before the echo.
+    var isQueuedBehind = false
 
     for (index, turn) in turns.enumerated() {
       let isRunning = index == turns.count - 1 && input.isLive && turn.status == .running
@@ -204,6 +210,7 @@ struct TranscriptBuilder {
       var built: BuiltTurn
 
       context.isRunning = isRunning
+      isQueuedBehind = isRunning && turn.prompt != nil
 
       if isRunning, !input.streaming.isEmpty {
         streamed = true
@@ -226,12 +233,20 @@ struct TranscriptBuilder {
       elements += blocks(entries(turnId: "tail", items: [], streaming: input.streaming, context: context), tasks: [], context: context).elements
     }
 
+    let activity = input.activity.map { TranscriptElement(id: "activity", kind: .activity(text: $0.text, since: $0.since)) }
+
+    if let activity, isQueuedBehind { elements.append(activity) }
+
     for prompt in input.sent { elements.append(TranscriptElement(id: "sent/\(prompt.uuid)", kind: .prompt(prompt.text), spacing: 22)) }
+
+    if let activity, !isQueuedBehind { elements.append(activity) }
 
     // A subagent's request has no row on the main thread, so its card goes last.
     for request in input.pending where !placed.contains(request.requestId) {
       elements.append(TranscriptElement(id: "permission/\(request.requestId)", kind: .permission(requestId: request.requestId)))
     }
+
+    if !elements.isEmpty { elements[0].spacing = 0 }
 
     return elements
   }
@@ -306,11 +321,7 @@ struct TranscriptBuilder {
       case .text(let text):
         if !text.allSatisfy(\.isWhitespace) { entries.append(.reply(id: id, text: text)) }
       case .thinking(let text):
-        if isVerbose, !text.allSatisfy(\.isWhitespace) {
-          entries.append(.thought(id: id, text: text))
-        } else {
-          entries.append(.thinking(id: id))
-        }
+        if isVerbose, !text.allSatisfy(\.isWhitespace) { entries.append(.thought(id: id, text: text)) }
       case .toolUse(let callId, let name, let partialInput):
         // The input JSON rarely parses before the block ends, and the row needs none of it to say what is running.
         entries.append(.tool(id: callId, name: name, input: (try? JSONValue(parsing: Data(partialInput.utf8))) ?? [:], call: nil))
@@ -361,8 +372,6 @@ struct TranscriptBuilder {
       built.elements.append(TranscriptElement(id: id, kind: .reply(text.trimmingCharacters(in: .whitespacesAndNewlines))))
     case .thought(let id, let text):
       built.elements.append(TranscriptElement(id: id, kind: .thought(text.trimmingCharacters(in: .whitespacesAndNewlines))))
-    case .thinking(let id):
-      built.elements.append(TranscriptElement(id: id, kind: .thinking))
     case .prompt(let id, let text, let origin):
       built.elements.append(TranscriptElement(id: id, kind: promptKind(text, origin: origin)))
     case .tool(let id, let name, let input, let call):

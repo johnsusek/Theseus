@@ -8,7 +8,7 @@ struct TranscriptBuilderTests {
   func shapes(_ transcript: Transcript, streaming: [StreamingMessage.Block] = [], isLive: Bool = false, change: (inout TranscriptBuilder) -> Void = { _ in }) -> [String] {
     var builder = makeBuilder()
     change(&builder)
-    return builder.elements(for: TranscriptInput(header: "Started in Theseus", transcript: transcript, streaming: streaming, isLive: isLive)).map(\.shape)
+    return builder.elements(for: TranscriptInput(transcript: transcript, streaming: streaming, isLive: isLive)).map(\.shape)
   }
 
   @Test func turnReadsPromptReplyToolsAndFooter() throws {
@@ -25,7 +25,7 @@ struct TranscriptBuilderTests {
     ])
 
     #expect(shapes(transcript) == [
-      "header", "prompt(Add dates)", "reply(Reading first.)", "group(Read 2 files, ran a command)", "tool(Ran swift build)", "tool(Edited A.swift)", "reply(Done.)", "footer(1m 52s)"
+      "prompt(Add dates)", "reply(Reading first.)", "group(Read 2 files, ran a command)", "tool(Ran swift build)", "tool(Edited A.swift)", "reply(Done.)", "footer(1m 52s)"
     ])
   }
 
@@ -44,7 +44,7 @@ struct TranscriptBuilderTests {
     let running = try transcript([prompt("First"), said("Working.")])
     let elements = builder.elements(for: TranscriptInput(transcript: running, isLive: true, sent: [SentPrompt(uuid: "q", text: "Queued")]))
 
-    #expect(elements.map(\.shape) == ["header", "prompt(First)", "reply(Working.)", "prompt(Queued)"])
+    #expect(elements.map(\.shape) == ["prompt(First)", "reply(Working.)", "prompt(Queued)"])
     #expect(elements.last?.id == "sent/q")
   }
 
@@ -93,12 +93,12 @@ struct TranscriptBuilderTests {
     builder.toggle("t2")
     let elements = builder.elements(for: TranscriptInput(transcript: transcript))
 
-    #expect(elements.map(\.shape) == ["header", "prompt(Go)", "group(Read A.swift, ran a command)", "tool(Read A.swift)", "tool(Ran swift test)", "detail"])
-    #expect(elements.map(\.box) == [nil, nil, nil, BoxSlot(isFirst: true), BoxSlot(), BoxSlot(isLast: true)])
-    #expect(elements[5].kind == .detail([.command("$ swift test"), .output("6 tests passed")]))
+    #expect(elements.map(\.shape) == ["prompt(Go)", "group(Read A.swift, ran a command)", "tool(Read A.swift)", "tool(Ran swift test)", "detail"])
+    #expect(elements.map(\.box) == [nil, nil, BoxSlot(isFirst: true), BoxSlot(), BoxSlot(isLast: true)])
+    #expect(elements[4].kind == .detail([.command("$ swift test"), .output("6 tests passed")]))
 
     builder.toggle("group/t1")
-    #expect(builder.elements(for: TranscriptInput(transcript: transcript)).count == 3)
+    #expect(builder.elements(for: TranscriptInput(transcript: transcript)).count == 2)
   }
 
   @Test func detailShowsPatchesAndCapsLongOutput() throws {
@@ -135,17 +135,35 @@ struct TranscriptBuilderTests {
     let grown = builder.elements(for: TranscriptInput(transcript: try transcript(frames), streaming: [.text("Second, still coming."), .toolUse(id: "t1", name: "Bash", partialInput: "{\"comm")], isLive: true))
     let committed = builder.elements(for: TranscriptInput(transcript: try transcript(frames + [said("Second, still coming.")]), streaming: [.toolUse(id: "t1", name: "Bash", partialInput: "{\"comm")], isLive: true))
 
-    #expect(streaming.map(\.shape) == ["header", "prompt(Go)", "reply(First.)", "reply(Second, still)", "tool(Running)"])
-    #expect(elementEdits(from: streaming, to: grown) == [ElementEdit(old: 3..<4, new: 3..<4)])
+    #expect(streaming.map(\.shape) == ["prompt(Go)", "reply(First.)", "reply(Second, still)", "tool(Running)"])
+    #expect(elementEdits(from: streaming, to: grown) == [ElementEdit(old: 2..<3, new: 2..<3)])
     #expect(elementEdits(from: grown, to: committed).isEmpty)
   }
 
-  @Test func thinkingShowsOnlyWhileItStreamsOrInVerbose() throws {
+  @Test func thinkingShowsOnlyInVerbose() throws {
     let transcript = try transcript([prompt("Go"), thought("Weighing it."), said("Answer.")])
 
-    #expect(shapes(transcript) == ["header", "prompt(Go)", "reply(Answer.)"])
-    #expect(shapes(transcript) { $0.isVerbose = true } == ["header", "prompt(Go)", "thought(Weighing it.)", "reply(Answer.)"])
-    #expect(shapes(transcript, streaming: [.thinking("Hmm")], isLive: true) == ["header", "prompt(Go)", "reply(Answer.)", "thinking"])
+    #expect(shapes(transcript) == ["prompt(Go)", "reply(Answer.)"])
+    #expect(shapes(transcript) { $0.isVerbose = true } == ["prompt(Go)", "thought(Weighing it.)", "reply(Answer.)"])
+    #expect(shapes(transcript, streaming: [.thinking("Hmm")], isLive: true) == ["prompt(Go)", "reply(Answer.)"])
+  }
+
+  @Test func activityFollowsTheRunningTurnBeforeQueuedPrompts() throws {
+    let transcript = try transcript([prompt("Go"), said("Looking.")])
+    var builder = makeBuilder()
+    let input = TranscriptInput(transcript: transcript, isLive: true, sent: [SentPrompt(uuid: "u1", text: "Next")], activity: Activity(text: "Thinking", since: .now))
+
+    #expect(builder.elements(for: input).map(\.shape) == ["prompt(Go)", "reply(Looking.)", "activity(Thinking)", "prompt(Next)"])
+  }
+
+  @Test func activityFollowsAFirstPromptNotEchoedYet() throws {
+    var builder = makeBuilder()
+    let input = TranscriptInput(isLive: true, sent: [SentPrompt(uuid: "u1", text: "Go")], activity: Activity(text: "Thinking", since: .now))
+
+    #expect(builder.elements(for: input).map(\.shape) == ["prompt(Go)", "activity(Thinking)"])
+
+    let opened = try transcript([["type": "system", "subtype": "init", "uuid": "i1", "session_id": "s", "cwd": "/tmp", "model": "x", "permissionMode": "default", "tools": [], "mcp_servers": [], "slash_commands": [], "output_style": "default", "apiKeySource": "none", "claude_code_version": "2"]])
+    #expect(builder.elements(for: TranscriptInput(transcript: opened, isLive: true, sent: input.sent, activity: input.activity)).map(\.shape) == ["prompt(Go)", "activity(Thinking)"])
   }
 
   @Test func permissionCardSitsUnderItsCallOrLast() throws {
@@ -154,9 +172,9 @@ struct TranscriptBuilderTests {
     let pending = [PendingRequest(requestId: "r1", toolUseId: "t1"), PendingRequest(requestId: "r2", toolUseId: "from-a-subagent")]
 
     #expect(builder.elements(for: TranscriptInput(transcript: transcript, pending: pending, isLive: true)).map(\.shape) == [
-      "header", "prompt(Go)", "tool(Running rm -rf build)", "permission(r1)", "tool(Reading a)", "permission(r2)"
+      "prompt(Go)", "tool(Running rm -rf build)", "permission(r1)", "tool(Reading a)", "permission(r2)"
     ])
-    #expect(builder.elements(for: TranscriptInput(transcript: transcript, isLive: true)).map(\.shape) == ["header", "prompt(Go)", "tool(Running rm -rf build)", "tool(Reading a)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: transcript, isLive: true)).map(\.shape) == ["prompt(Go)", "tool(Running rm -rf build)", "tool(Reading a)"])
   }
 
   @Test func taskListFollowsTheRunningTurnsFirstBlock() throws {
@@ -166,7 +184,7 @@ struct TranscriptBuilderTests {
     let tasks = TaskList(running).tasks
 
     #expect(tasks.count == 1)
-    #expect(builder.elements(for: TranscriptInput(transcript: running, tasks: tasks, isLive: true)).map(\.shape) == ["header", "prompt(Go)", "reply(Planning.)", "tasks(1)", "tool(Added task Write tests)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: running, tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "reply(Planning.)", "tasks(1)", "tool(Added task Write tests)"])
     #expect(builder.elements(for: TranscriptInput(transcript: try transcript(frames + [finished()]), tasks: tasks, isLive: true)).map(\.shape).contains("tasks(1)") == false)
     #expect(builder.elements(for: TranscriptInput(transcript: running, tasks: tasks)).map(\.shape).contains("tasks(1)") == false)
   }
@@ -176,9 +194,9 @@ struct TranscriptBuilderTests {
     var builder = makeBuilder()
     let bare = try transcript([prompt("Go")])
 
-    #expect(builder.elements(for: TranscriptInput(transcript: bare, tasks: tasks, isLive: true)).map(\.shape) == ["header", "prompt(Go)", "tasks(1)"])
-    #expect(builder.elements(for: TranscriptInput(transcript: bare, streaming: [.thinking("Hmm")], tasks: tasks, isLive: true)).map(\.shape) == ["header", "prompt(Go)", "thinking", "tasks(1)"])
-    #expect(builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go"), thought("Hmm")]), tasks: tasks, isLive: true)).map(\.shape) == ["header", "prompt(Go)", "tasks(1)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: bare, tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "tasks(1)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: bare, streaming: [.thinking("Hmm")], tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "tasks(1)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go"), thought("Hmm")]), tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "tasks(1)"])
   }
 
   @Test func unansweredCallInAnEndedTurnIsStopped() throws {
@@ -207,7 +225,7 @@ struct TranscriptBuilderTests {
       prompt("And one more thing", at: "10:02:00")
     ])
 
-    #expect(shapes(transcript, isLive: true) == ["header", "prompt(Go)", "reply(Working.)", "notice(bell, Agent finished)", "prompt(And one more thing)"])
+    #expect(shapes(transcript, isLive: true) == ["prompt(Go)", "reply(Working.)", "notice(bell, Agent finished)", "prompt(And one more thing)"])
   }
 
   @Test func turnsOtherThingsStartedAreOneLine() throws {
@@ -218,7 +236,7 @@ struct TranscriptBuilderTests {
     ])
 
     #expect(shapes(transcript) == [
-      "header", "notice(bell, Agent finished scanning)", "reply(Noted.)", "footer(2.4s)",
+      "notice(bell, Agent finished scanning)", "reply(Noted.)", "footer(2.4s)",
       "notice(clock, Nightly check \u{2026})", "reply(Fine.)", "footer(0.9s)", "prompt(Typed by a person)"
     ])
   }
@@ -234,11 +252,11 @@ struct TranscriptBuilderTests {
     builder.toggle("agent-1")
     let elements = builder.elements(for: TranscriptInput(transcript: transcript))
 
-    guard case .tool(let row) = elements[2].kind else { return #expect(Bool(false), "The agent's row is missing") }
+    guard case .tool(let row) = elements[1].kind else { return #expect(Bool(false), "The agent's row is missing") }
 
     #expect(row.verb == "Ran agent" && row.target == "Scan the repo")
     #expect(row.note == "Explore \u{B7} 12 tool uses \u{B7} 34.5k tokens")
-    #expect(elements[3].kind == .detail([.report("Found two files")]))
+    #expect(elements[2].kind == .detail([.report("Found two files")]))
   }
 
   @Test func earlierTurnsAreUnchangedWhenALaterOneGrows() throws {

@@ -14,6 +14,7 @@ struct TranscriptRenderer {
   /// Makes the view attachment for a task list or a permission request.
   var card: (TranscriptElement) -> NSTextAttachment = { _ in NSTextAttachment() }
   var mark: (StatusMark) -> NSTextAttachment = { _ in NSTextAttachment() }
+  var clock: (Date) -> NSTextAttachment = { _ in NSTextAttachment() }
 
   private var secondary: [NSAttributedString.Key: Any] { [.font: TranscriptStyle.font, .foregroundColor: NSColor.secondaryLabelColor] }
 
@@ -59,8 +60,6 @@ struct TranscriptRenderer {
     let inset = element.box == nil ? 0 : Decoration.boxInset
 
     switch element.kind {
-    case .header(let text):
-      return [line(TranscriptStyle.text(text, font: TranscriptStyle.callout, color: .secondaryLabelColor))]
     case .prompt(let text):
       return bubble(text)
     case .notice(let symbol, let text, _):
@@ -71,9 +70,10 @@ struct TranscriptRenderer {
       return Markdown.paragraphs(text, style: MarkdownStyle(width: columnWidth))
     case .thought(let text):
       return Markdown.paragraphs(text, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), color: .secondaryLabelColor, lineSpacing: 3, width: columnWidth))
-    case .thinking:
+    case .activity(let text, let since):
       let content = NSMutableAttributedString(attachment: mark(.running))
-      content.append(NSAttributedString(string: " Thinking", attributes: secondary))
+      content.append(NSAttributedString(string: " \(text)  ", attributes: secondary))
+      content.append(NSAttributedString(attachment: clock(since)))
       return [line(content)]
     case .tool(let row):
       return [toolRow(row, inset: inset)]

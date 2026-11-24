@@ -9,10 +9,6 @@ struct StatusRowState: Equatable {
   var changedFiles = 0
   var added = 0
   var removed = 0
-  /// What the session is doing, while it is busy.
-  var activity: String?
-  /// When the running turn started, which the timer counts from.
-  var busySince: Date?
   /// The model and mode menus appear once the process has answered `initialize`.
   var hasSession = false
   var model = ""
@@ -123,7 +119,7 @@ func changeRows(_ files: [ChangedFile], base: URL) -> [ChangeRow] {
   }
 }
 
-/// The row's activity line: waiting on a permission request, else the CLI's own summary, else the running tool call, else "Thinking".
+/// What the running turn is doing: waiting on a permission request, else the CLI's own summary, else the running tool call, else "Thinking".
 func activityLine(summary: String?, isWaiting: Bool, transcript: Transcript) -> String {
   if isWaiting { return "Waiting for approval" }
 

@@ -48,12 +48,11 @@ extension TranscriptElement {
   /// A short name for the element's kind, for comparing a transcript's shape.
   var shape: String {
     switch kind {
-    case .header: "header"
     case .prompt(let text): "prompt(\(text))"
     case .notice(let symbol, let text, _): "notice(\(symbol), \(text))"
     case .reply(let text): "reply(\(text))"
     case .thought(let text): "thought(\(text))"
-    case .thinking: "thinking"
+    case .activity(let text, _): "activity(\(text))"
     case .tool(let row): "tool(\([row.verb, row.target].filter { !$0.isEmpty }.joined(separator: " ")))"
     case .group(let group): "group(\(group.summary))"
     case .detail: "detail"
