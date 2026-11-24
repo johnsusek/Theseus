@@ -35,10 +35,7 @@ struct StatusModelTests {
     #expect(StatusRowState().contextFraction == 0)
   }
 
-  @Test func timesReadAsClocksAndSpans() {
-    #expect(timerText(7) == "0:07")
-    #expect(timerText(199) == "3:19")
-    #expect(timerText(3723) == "1:02:03")
+  @Test func timesReadAsSpans() {
     #expect(elapsedText(48) == "48s")
     #expect(elapsedText(124) == "2m 04s")
     #expect(elapsedText(3725) == "1h 02m")

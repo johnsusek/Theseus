@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 
 /// A view in the transcript whose colors follow whether its window is main.
 @MainActor
@@ -65,26 +66,21 @@ private struct Unchecked<Value>: @unchecked Sendable {
   let value: Value
 }
 
-/// The moving ellipsis on a running tool call, or the red mark on a failed one.
+/// The moving ellipsis on a running tool call or turn.
 final class StatusMarkView: NSImageView, ActiveAppearing {
-  private let tint: NSColor
-
   var isActive: Bool {
-    didSet { contentTintColor = isActive ? tint : .secondaryLabelColor }
+    didSet { contentTintColor = isActive ? .systemOrange : .secondaryLabelColor }
   }
 
-  init(_ mark: StatusMark, isActive: Bool) {
-    let isRunning = mark == .running
-    let label = isRunning ? "Running" : "Failed"
-    tint = isRunning ? .systemOrange : .systemRed
+  init(isActive: Bool) {
     self.isActive = isActive
     super.init(frame: .zero)
-    image = NSImage(systemSymbolName: isRunning ? "ellipsis" : "exclamationmark.circle.fill", accessibilityDescription: label)?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .regular))
+    image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "Running")?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .regular))
     imageScaling = .scaleNone
-    contentTintColor = isActive ? tint : .secondaryLabelColor
-    toolTip = label
+    contentTintColor = isActive ? .systemOrange : .secondaryLabelColor
+    toolTip = "Running"
 
-    if isRunning, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { addSymbolEffect(.variableColor.iterative, options: .repeating) }
+    if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { addSymbolEffect(.variableColor.iterative, options: .repeating) }
   }
 
   @available(*, unavailable)
@@ -92,22 +88,24 @@ final class StatusMarkView: NSImageView, ActiveAppearing {
 }
 
 /// The running turn's timer, which counts up by itself so the transcript's text does not change every second.
+/// Heading a group, it draws the group's chevron after its text, which changes width.
 final class ClockView: NSTextField {
   static let font = TranscriptStyle.digits
-  /// Room for "0:00:00", so the view keeps its size past an hour.
-  static let size = NSSize(width: ceil(NSAttributedString(string: "0:00:00", attributes: [.font: font]).size().width) + 4, height: 17)
+  /// Room for "10h 59m" and a chevron, so the view keeps its size as the time grows.
+  static let size = NSSize(width: ceil(NSAttributedString(string: "10h 59m  ", attributes: [.font: font]).size().width) + 14, height: 17)
 
   private let since: Date
+  private let chevron: Bool?
   private var ticker: Task<Void, Never>?
 
-  init(since: Date) {
+  init(since: Date, chevron: Bool?) {
     self.since = since
+    self.chevron = chevron
     super.init(frame: .zero)
     isEditable = false
     isSelectable = false
     isBordered = false
     drawsBackground = false
-    font = Self.font
     textColor = .secondaryLabelColor
     setAccessibilityLabel("Elapsed")
     tick()
@@ -122,5 +120,56 @@ final class ClockView: NSTextField {
     ticker = window == nil ? nil : everySecond(self) { $0.tick() }
   }
 
-  private func tick() { stringValue = timerText(max(Int(Date.now.timeIntervalSince(since)), 0)) }
+  /// A click goes to the transcript, which opens or closes the group.
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+  private func tick() {
+    let text = NSMutableAttributedString(string: elapsedText(max(Int(Date.now.timeIntervalSince(since)), 0)), attributes: [.font: Self.font, .foregroundColor: NSColor.secondaryLabelColor])
+
+    if let chevron {
+      text.append(NSAttributedString(string: "  ", attributes: [.font: Self.font]))
+      text.append(TranscriptStyle.symbol(chevron ? "chevron.down" : "chevron.right", pointSize: 9, weight: .semibold))
+    }
+
+    attributedStringValue = text
+  }
+}
+
+/// An image a tool call returned, cropped to fill a small rounded frame.
+final class ThumbnailView: NSView {
+  private static let images = NSCache<NSString, CGImage>()
+
+  init(_ thumbnail: Thumbnail) {
+    super.init(frame: NSRect(origin: .zero, size: TranscriptStyle.thumbnailSize))
+    wantsLayer = true
+    layer?.cornerRadius = 4
+    layer?.masksToBounds = true
+    layer?.borderWidth = 0.5
+    layer?.contentsGravity = .resizeAspectFill
+    layer?.contents = Self.image(thumbnail)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("ThumbnailView is built in code") }
+
+  override var wantsUpdateLayer: Bool { true }
+
+  override func updateLayer() { layer?.borderColor = NSColor.separatorColor.cgColor }
+
+  /// A click goes to the transcript, which opens or closes the row.
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+  /// Decoded once per image, at a size for the frame.
+  private static func image(_ thumbnail: Thumbnail) -> CGImage? {
+    if let image = images.object(forKey: thumbnail.id as NSString) { return image }
+
+    let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 160, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary
+    guard let source = CGImageSourceCreateWithData(thumbnail.data as CFData, nil), let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
+      log.error("Could not decode the image of \(thumbnail.id, privacy: .public)")
+      return nil
+    }
+
+    images.setObject(image, forKey: thumbnail.id as NSString)
+    return image
+  }
 }

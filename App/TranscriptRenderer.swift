@@ -1,11 +1,6 @@
 import AppKit
 import ClaudeEngine
 
-/// A colored mark that is a view, so it can animate and go gray in an inactive window.
-enum StatusMark {
-  case running, failed
-}
-
 /// Turns one element into the attributed text the transcript holds for it.
 @MainActor
 struct TranscriptRenderer {
@@ -13,8 +8,11 @@ struct TranscriptRenderer {
   var columnWidth = 720.0
   /// Makes the view attachment for a task list or a permission request.
   var card: (TranscriptElement) -> NSTextAttachment = { _ in NSTextAttachment() }
-  var mark: (StatusMark) -> NSTextAttachment = { _ in NSTextAttachment() }
-  var clock: (Date) -> NSTextAttachment = { _ in NSTextAttachment() }
+  /// The moving ellipsis of something running.
+  var mark: () -> NSTextAttachment = { NSTextAttachment() }
+  /// The running turn's timer, with a chevron after it when it heads a group that is open (true) or closed (false).
+  var clock: (Date, Bool?) -> NSTextAttachment = { _, _ in NSTextAttachment() }
+  var thumbnail: (Thumbnail) -> NSTextAttachment = { _ in NSTextAttachment() }
 
   private var secondary: [NSAttributedString.Key: Any] { [.font: TranscriptStyle.font, .foregroundColor: NSColor.secondaryLabelColor] }
 
@@ -71,22 +69,37 @@ struct TranscriptRenderer {
     case .thought(let text):
       return Markdown.paragraphs(text, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), color: .secondaryLabelColor, lineSpacing: 3, width: columnWidth))
     case .activity(let text, let since):
-      let content = NSMutableAttributedString(attachment: mark(.running))
+      let content = NSMutableAttributedString(attachment: mark())
       content.append(NSAttributedString(string: " \(text)  ", attributes: secondary))
-      content.append(NSAttributedString(attachment: clock(since)))
+      content.append(NSAttributedString(attachment: clock(since, nil)))
       return [line(content)]
     case .tool(let row):
       return [toolRow(row, inset: inset)]
     case .group(let group):
       let content = NSMutableAttributedString()
 
+      // The clock is last on the line, so it draws the chevron after its own changing width.
+      if let activity = group.activity {
+        content.append(NSAttributedString(attachment: mark()))
+        content.append(NSAttributedString(string: " \(activity.text)  ", attributes: secondary))
+        content.append(NSAttributedString(attachment: clock(activity.since, group.isExpanded)))
+        return [line(content, toggle: group.id)]
+      }
+
       for part in group.summary { content.append(part.isTarget ? TranscriptStyle.text(part.text) : NSAttributedString(string: part.text, attributes: secondary)) }
 
       content.append(delta(added: group.added, removed: group.removed))
       content.append(chevron(isOpen: group.isExpanded))
-      return [line(content, toggle: group.id)]
+      return [thumbnails(group.thumbnails, after: content, inset: inset, toggle: group.id)]
     case .detail(let blocks):
       return detail(blocks, inset: inset)
+    case .shell(let command, let output):
+      var lines = output.isEmpty ? ["No output"] : output.components(separatedBy: "\n")
+
+      if lines.count > 16 { lines = lines.prefix(16) + ["\u{2026} \((lines.count - 16).formatted()) more lines"] }
+
+      let commandLines = command.map { Markdown.codeLines($0, language: "bash", left: 0, right: 0, before: 0, width: columnWidth) } ?? []
+      return commandLines + Markdown.codeLines(lines.joined(separator: "\n"), left: 0, right: 0, before: commandLines.isEmpty ? 0 : 6, color: .secondaryLabelColor)
     case .tasks, .permission, .nextStep, .footer:
       return [line(NSAttributedString(attachment: card(element)))]
     }
@@ -123,7 +136,7 @@ struct TranscriptRenderer {
     let content = NSMutableAttributedString()
 
     if row.state == .running || row.state == .waiting {
-      content.append(NSAttributedString(attachment: mark(.running)))
+      content.append(NSAttributedString(attachment: mark()))
       content.append(NSAttributedString(string: " ", attributes: secondary))
     }
 
@@ -135,10 +148,8 @@ struct TranscriptRenderer {
 
     content.append(delta(added: row.added, removed: row.removed))
 
-    if row.state == .failed {
-      content.append(NSAttributedString(string: " ", attributes: secondary))
-      content.append(NSAttributedString(attachment: mark(.failed)))
-    }
+    // A denial says so in its note.
+    if row.state == .failed, !row.note.hasPrefix("Denied") { content.append(TranscriptStyle.text("  Failed", color: .systemRed)) }
 
     if row.state == .waiting { content.append(NSAttributedString(string: "  Needs Approval", attributes: secondary)) }
 
@@ -146,10 +157,31 @@ struct TranscriptRenderer {
 
     content.append(chevron(isOpen: row.isExpanded))
 
-    var paragraph = line(content, indent: inset, toggle: row.id)
+    var paragraph = thumbnails(row.thumbnails, after: content, inset: inset, toggle: row.id)
 
     if !row.tooltip.isEmpty { paragraph.base[.toolTip] = row.tooltip }
 
+    return paragraph
+  }
+
+  /// A row's line with the images its calls returned at the column's right edge.
+  private func thumbnails(_ thumbnails: [Thumbnail], after content: NSMutableAttributedString, inset: CGFloat, toggle: String) -> Paragraph {
+    guard !thumbnails.isEmpty else { return line(content, indent: inset, toggle: toggle) }
+
+    let gap = NSAttributedString(string: " ", attributes: secondary)
+    content.append(NSAttributedString(string: "\t", attributes: secondary))
+
+    for (index, thumbnail) in thumbnails.enumerated() {
+      if index > 0 { content.append(gap) }
+
+      content.append(NSAttributedString(attachment: self.thumbnail(thumbnail)))
+    }
+
+    // A right tab measures a view attachment by its placeholder image, so a left tab starts the images their own width from the edge.
+    let width = CGFloat(thumbnails.count) * TranscriptStyle.thumbnailSize.width + CGFloat(thumbnails.count - 1) * ceil(gap.size().width)
+    var paragraph = line(content, indent: inset, toggle: toggle)
+    paragraph.restyle { $0.tabStops = [NSTextTab(textAlignment: .left, location: columnWidth - inset - width)] }
+    paragraph.base[.fitsColumn] = true
     return paragraph
   }
 

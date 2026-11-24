@@ -20,6 +20,16 @@ struct ToolRow: Equatable {
   var isExpanded = false
   var tooltip = ""
   var copy: CopySource?
+  /// Images the call returned, drawn small at the row's right edge.
+  var thumbnails: [Thumbnail] = []
+}
+
+/// An image a tool call returned. Two are the same when their ids are, so comparing rows never compares image bytes.
+struct Thumbnail: Equatable {
+  var id: String
+  var data: Data
+
+  static func == (lhs: Thumbnail, rhs: Thumbnail) -> Bool { lhs.id == rhs.id }
 }
 
 /// A run of finished tool calls as one sentence.
@@ -29,6 +39,25 @@ struct GroupRow: Equatable {
   var added = 0
   var removed = 0
   var isExpanded = false
+  /// The running turn's last run of calls reads as what the turn is doing, with its timer, until the turn moves on.
+  var activity: Activity?
+  var thumbnails: [Thumbnail] = []
+}
+
+/// A command the user ran from the desktop app, which records it as a prompt of its own: `<bash-input>` with its output.
+struct ShellRun: Equatable {
+  var command: String
+  var output: String
+
+  init?(prompt: String?) {
+    guard let prompt, prompt.hasPrefix("<bash-input>"), let match = prompt.firstMatch(of: /<bash-input>([\s\S]*?)<\/bash-input>(?:<bash-stdout>([\s\S]*?)<\/bash-stdout>)?(?:<bash-stderr>([\s\S]*?)<\/bash-stderr>)?/) else { return nil }
+
+    let entities = [("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&amp;", "&")]
+    command = String(match.1).trimmingCharacters(in: .whitespacesAndNewlines)
+    output = [match.2, match.3].compactMap { $0 }.map { stream in
+      entities.reduce(String(stream)) { $0.replacingOccurrences(of: $1.0, with: $1.1) }.trimmingCharacters(in: .whitespacesAndNewlines)
+    }.filter { !$0.isEmpty }.joined(separator: "\n")
+  }
 }
 
 /// What a context menu's Copy item puts on the pasteboard.
@@ -74,6 +103,8 @@ struct TranscriptElement: Equatable, Identifiable {
     case tool(ToolRow)
     case group(GroupRow)
     case detail([DetailBlock])
+    /// A command the user ran, or only its output when it sits under the reply's code block it came from.
+    case shell(command: String?, output: String)
     case tasks([TaskItem])
     case permission(requestId: String)
     case nextStep(NextStep)
@@ -178,6 +209,11 @@ struct TranscriptBuilder {
     var pending: [PendingRequest]
     /// A footer names the day unless it is today.
     var today: Date
+    var activity: Activity?
+    /// Commands run from this turn's code blocks, shown under them.
+    var runs: [ShellRun]
+    /// The turn is a command shown under an earlier turn's code block, so it shows nothing itself.
+    var isAttached: Bool
   }
 
   private struct CachedTurn {
@@ -193,6 +229,8 @@ struct TranscriptBuilder {
     var agentIds: [String] = []
     /// Calls with no result yet. One can still arrive after the turn's own frames have stopped.
     var openCallIds: [String] = []
+    /// The turn's last group shows the activity, so the activity line is left out.
+    var showsActivity = false
   }
 
   private enum Entry {
@@ -200,12 +238,6 @@ struct TranscriptBuilder {
     case thought(id: String, text: String)
     case prompt(id: String, text: String, origin: String?)
     case tool(id: String, name: String, input: JSONValue, call: ToolCall?)
-
-    var folds: Bool {
-      guard case .tool(_, _, _, let call) = self else { return false }
-
-      return call?.status == .completed
-    }
   }
 
   private struct Context {
@@ -216,6 +248,8 @@ struct TranscriptBuilder {
     var isRunning = false
     /// The turn being built is the last one, finished, with nothing sent after it.
     var isLatest = false
+    var activity: Activity?
+    var runs: [ShellRun] = []
   }
 
   /// Opens or closes a row or group, or shows or hides the rest of a capped output.
@@ -236,15 +270,40 @@ struct TranscriptBuilder {
     var streamed = false
     // Sent prompts are queued behind the running turn only once that turn shows its own prompt. `system/init` opens a turn before the echo.
     var isQueuedBehind = false
+    var showsActivity = false
+    var runs: [Int: [ShellRun]] = [:]
+    var attached: Set<Int> = []
+    var replied: Turn?
+
+    // A command run from a code block goes under that block in the turn before it, as the desktop app shows it.
+    for turn in turns {
+      guard let run = ShellRun(prompt: turn.prompt?.text) else {
+        replied = turn
+        continue
+      }
+
+      let hasBlock = replied?.items.contains { item in
+        guard case .text(let text) = item.content else { return false }
+
+        return fencedBlocks(text).contains { $0.code == run.command }
+      }
+
+      guard let replied, hasBlock == true else { continue }
+
+      runs[replied.id, default: []].append(run)
+      attached.insert(turn.id)
+    }
 
     for (index, turn) in turns.enumerated() {
       let isRunning = index == turns.count - 1 && input.isLive && turn.status == .running
       let isLatest = index == turns.count - 1 && !isRunning && input.sent.isEmpty
-      let key = TurnKey(range: turn.messageRange, lastItemId: turn.items.last?.id, status: turn.status, isRunning: isRunning, isLatest: isLatest, tasks: isRunning ? input.tasks : [], pending: input.pending, today: today)
+      let key = TurnKey(range: turn.messageRange, lastItemId: turn.items.last?.id, status: turn.status, isRunning: isRunning, isLatest: isLatest, tasks: isRunning ? input.tasks : [], pending: input.pending, today: today, activity: isRunning ? input.activity : nil, runs: runs[turn.id] ?? [], isAttached: attached.contains(turn.id))
       var built: BuiltTurn
 
       context.isRunning = isRunning
       context.isLatest = isLatest
+      context.activity = key.activity
+      context.runs = key.runs
       isQueuedBehind = isRunning && turn.prompt != nil
 
       if isRunning, !input.streaming.isEmpty {
@@ -259,16 +318,19 @@ struct TranscriptBuilder {
 
       elements += built.elements
       placed.formUnion(built.placed)
+      showsActivity = showsActivity || built.showsActivity
     }
 
     context.isRunning = true
+    context.activity = nil
+    context.runs = []
 
     // Stream events can outrun the frame that opens their turn.
     if !streamed, input.isLive, !input.streaming.isEmpty {
       elements += blocks(entries(turnId: "tail", items: [], streaming: input.streaming, context: context), tasks: [], context: context).elements
     }
 
-    let activity = input.activity.map { TranscriptElement(id: "activity", kind: .activity(text: $0.text, since: $0.since)) }
+    let activity = showsActivity ? nil : input.activity.map { TranscriptElement(id: "activity", kind: .activity(text: $0.text, since: $0.since)) }
 
     if let activity, isQueuedBehind { elements.append(activity) }
 
@@ -298,6 +360,12 @@ struct TranscriptBuilder {
   private func build(_ turn: Turn, key: TurnKey, streaming: [StreamingMessage.Block], context: Context) -> BuiltTurn {
     var built = BuiltTurn()
 
+    if let run = ShellRun(prompt: turn.prompt?.text) {
+      if !key.isAttached { built.elements.append(TranscriptElement(id: "\(turn.id)/shell", kind: .shell(command: run.command, output: run.output), turn: turn.id, spacing: 22)) }
+
+      return built
+    }
+
     if let prompt = turn.prompt?.text, !prompt.allSatisfy(\.isWhitespace) {
       built.elements.append(TranscriptElement(id: "\(turn.id)/prompt", kind: promptKind(prompt, origin: turn.origin), spacing: 22))
     }
@@ -311,6 +379,7 @@ struct TranscriptBuilder {
     built.placed = body.placed
     built.agentIds = body.agentIds
     built.openCallIds = body.openCallIds
+    built.showsActivity = body.showsActivity
 
     let wrapUp = turn.items.reversed().lazy.compactMap { item -> ToolCall? in
       guard case .toolCall(let callId) = item.content else { return nil }
@@ -398,14 +467,17 @@ struct TranscriptBuilder {
     while index < entries.count {
       var end = index + 1
 
-      if entries[index].folds {
-        while end < entries.count, entries[end].folds { end += 1 }
+      if folds(entries[index], context: context) {
+        while end < entries.count, folds(entries[end], context: context) { end += 1 }
       }
 
       let run = Array(entries[index..<end])
+      // While the turn runs, its last calls fold under what it is doing, as the desktop app shows them.
+      let live = context.isRunning && end == entries.count && folds(run[0], context: context) ? context.activity : nil
 
-      if run.count > 1 {
-        group(run, into: &built, context: context)
+      if run.count > 1 || live != nil {
+        group(run, live: live, into: &built, context: context)
+        built.showsActivity = live != nil
       } else {
         single(run[0], into: &built, context: context)
       }
@@ -422,10 +494,35 @@ struct TranscriptBuilder {
     return built
   }
 
+  /// A tool call folds into a group unless it waits on a permission card, which shows under its own row.
+  private func folds(_ entry: Entry, context: Context) -> Bool {
+    guard case .tool(let id, _, _, _) = entry else { return false }
+
+    return !context.pending.contains { $0.toolUseId == id }
+  }
+
   private func single(_ entry: Entry, into built: inout BuiltTurn, context: Context) {
     switch entry {
     case .reply(let id, let text):
-      built.elements.append(TranscriptElement(id: id, kind: .reply(text.trimmingCharacters(in: .whitespacesAndNewlines))))
+      var rest = text[...]
+      var pieces = 0
+
+      // A reply splits after each code block a command was run from, with the command's output between the halves.
+      for block in fencedBlocks(text) {
+        guard let run = context.runs.last(where: { $0.command == block.code }) else { continue }
+
+        let piece = text[rest.startIndex..<block.end].trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !piece.isEmpty { built.elements.append(TranscriptElement(id: pieces == 0 ? id : "\(id)/\(pieces)", kind: .reply(piece))) }
+
+        built.elements.append(TranscriptElement(id: "\(id)/run\(pieces)", kind: .shell(command: nil, output: run.output), spacing: 6))
+        rest = text[block.end...]
+        pieces += 1
+      }
+
+      let piece = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+
+      if !piece.isEmpty { built.elements.append(TranscriptElement(id: pieces == 0 ? id : "\(id)/\(pieces)", kind: .reply(piece))) }
     case .thought(let id, let text):
       built.elements.append(TranscriptElement(id: id, kind: .thought(text.trimmingCharacters(in: .whitespacesAndNewlines))))
     case .prompt(let id, let text, let origin):
@@ -456,21 +553,30 @@ struct TranscriptBuilder {
     }
   }
 
-  private func group(_ run: [Entry], into built: inout BuiltTurn, context: Context) {
+  /// A run of calls as one summary sentence, "Ran 4 commands, edited a file, 1 failed", or as the `live` activity while the turn runs.
+  private func group(_ run: [Entry], live: Activity?, into built: inout BuiltTurn, context: Context) {
     var rows: [(row: ToolRow, detail: [DetailBlock])] = []
     var calls: [(name: String, target: String)] = []
 
     for case .tool(let id, let name, let input, let call) in run {
       let row = row(id: id, name: name, input: input, call: call, context: context)
       rows.append((row, row.isExpanded ? detail(id: id, name: name, input: input, call: call, context: context) : []))
-      calls += phraseNames(name, input: input).map { ($0, row.target) }
+      // A Write that replaced a file counts as an edit.
+      calls += (isUpdate(name, call: call) ? ["Edit"] : phraseNames(name, input: input)).map { ($0, row.target) }
 
       if context.agents[id] != nil { built.agentIds.append(id) }
+
+      if call?.result == nil { built.openCallIds.append(id) }
     }
 
     let id = "group/\(rows[0].row.id)"
     let isExpanded = isVerbose || expanded.contains(id)
-    let header = GroupRow(id: id, summary: toolSummary(calls), added: rows.reduce(0) { $0 + $1.row.added }, removed: rows.reduce(0) { $0 + $1.row.removed }, isExpanded: isExpanded)
+    let failed = rows.count { $0.row.state == .failed }
+    var summary = toolSummary(calls)
+
+    if failed > 0 { summary.append(SummaryPart(text: ", \(failed) failed")) }
+
+    let header = GroupRow(id: id, summary: summary, added: rows.reduce(0) { $0 + $1.row.added }, removed: rows.reduce(0) { $0 + $1.row.removed }, isExpanded: isExpanded, activity: live, thumbnails: Array(rows.flatMap(\.row.thumbnails).prefix(4)))
     built.elements.append(TranscriptElement(id: id, kind: .group(header)))
     guard isExpanded else { return }
 
@@ -510,6 +616,8 @@ struct TranscriptBuilder {
       row.state = context.pending.contains { $0.toolUseId == id } ? .waiting : context.isRunning ? .running : .stopped
     }
 
+    if row.state == .completed, isUpdate(name, call: call) { row.verb = "Updated" }
+
     if let task = context.agents[id] {
       if let type = task.subagentType { notes.append(type) }
 
@@ -536,8 +644,9 @@ struct TranscriptBuilder {
     }
 
     // A command reads as its description, in the row's tense.
+    // A command that failed keeps its description as written, as the desktop app shows it.
     if name == "Bash", let description = input["description"]?.string, !description.isEmpty, row.verb == phrase.past || row.verb == phrase.present {
-      row.verb = conjugated(description, isRunning: row.verb == phrase.present)
+      row.verb = row.state == .failed ? description : conjugated(description, isRunning: row.verb == phrase.present)
       row.target = ""
     }
 
@@ -551,7 +660,17 @@ struct TranscriptBuilder {
     row.tooltip = tips.joined(separator: "\n")
     row.added = call?.lineDelta?.added ?? 0
     row.removed = call?.lineDelta?.removed ?? 0
+    row.thumbnails = (call?.result ?? []).enumerated().compactMap { index, block in
+      guard case .image(.base64(let data, _)) = block else { return nil }
+
+      return Thumbnail(id: "\(id)/\(index)", data: data)
+    }
     return row
+  }
+
+  /// A Write whose file already existed, which the CLI reports as an update.
+  private func isUpdate(_ name: String, call: ToolCall?) -> Bool {
+    name == "Write" && call?.output?["type"]?.string == "update"
   }
 
   /// What an expanded row shows: Bash's command and output, an edit's patch, an agent's report, anything else's result text.
@@ -635,4 +754,35 @@ struct TranscriptBuilder {
 
     return duration.formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow).locale(locale))
   }
+}
+
+/// A reply's fenced code blocks: each block's code, trimmed, and where its closing fence line ends.
+func fencedBlocks(_ text: String) -> [(code: String, end: String.Index)] {
+  var blocks: [(code: String, end: String.Index)] = []
+  var fence: Substring?
+  var lines: [Substring] = []
+  var start = text.startIndex
+
+  while start < text.endIndex {
+    let end = text[start...].firstIndex(of: "\n") ?? text.endIndex
+    let line = text[start..<end]
+    let trimmed = line.drop { $0 == " " }
+    let marker = trimmed.prefix { $0 == "`" || $0 == "~" }
+
+    if let open = fence {
+      if marker.count >= open.count, marker.first == open.first, trimmed.dropFirst(marker.count).allSatisfy(\.isWhitespace) {
+        blocks.append((lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines), end))
+        fence = nil
+      } else {
+        lines.append(line)
+      }
+    } else if marker.count >= 3, Set(marker).count == 1 {
+      fence = marker
+      lines = []
+    }
+
+    start = end < text.endIndex ? text.index(after: end) : end
+  }
+
+  return blocks
 }

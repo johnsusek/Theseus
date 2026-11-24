@@ -25,7 +25,7 @@ struct TranscriptBuilderTests {
     ])
 
     #expect(shapes(transcript) == [
-      "prompt(Add dates)", "reply(Reading first.)", "group(Read 2 files, ran a command)", "tool(Ran a command)", "tool(Edited A.swift)", "reply(Done.)", "footer(1m 52s)"
+      "prompt(Add dates)", "reply(Reading first.)", "group(Read 2 files, ran 2 commands, edited a file, 1 failed)", "reply(Done.)", "footer(1m 52s)"
     ])
   }
 
@@ -95,12 +95,14 @@ struct TranscriptBuilderTests {
       call("t5", "Edit", ["file_path": "/tmp/C.swift"]), returned("t5", "<tool_use_error>String to replace not found in file.</tool_use_error>", isError: true)
     ])
     var builder = makeBuilder()
+    builder.toggle("group/t1")
+    builder.toggle("group/t4")
     let rows = builder.elements(for: TranscriptInput(transcript: transcript, pending: [PendingRequest(requestId: "r1", toolUseId: "t3")], isLive: true)).compactMap { element -> ToolRow? in
       if case .tool(let row) = element.kind { row } else { nil }
     }
 
     #expect(rows.map(\.state) == [.completed, .failed, .waiting, .failed, .failed])
-    #expect(rows.map(\.verb) == ["Edited", "Ran a command", "Running", "Could not create", "Could not edit"])
+    #expect(rows.map(\.verb) == ["Edited", "Ran", "Running", "Could not create", "Could not edit"])
     #expect(rows.map(\.note) == ["", "", "", "Denied", ""])
     #expect(rows[0].added == 2 && rows[0].removed == 1)
     #expect(rows[0].copy == CopySource(title: "Copy Path", text: "/tmp/A.swift"))
@@ -119,7 +121,7 @@ struct TranscriptBuilderTests {
     builder.toggle("t2")
     let elements = builder.elements(for: TranscriptInput(transcript: transcript))
 
-    #expect(elements.map(\.shape) == ["prompt(Go)", "group(Read A.swift, ran a command)", "tool(Read A.swift)", "tool(Ran swift\u{2026})", "detail"])
+    #expect(elements.map(\.shape) == ["prompt(Go)", "group(Read a file, ran a command)", "tool(Read A.swift)", "tool(Ran swift\u{2026})", "detail"])
     #expect(elements.map(\.box) == [nil, nil, BoxSlot(isFirst: true), BoxSlot(), BoxSlot(isLast: true)])
     #expect(elements[4].kind == .detail([.command("$ swift test"), .output("6 tests passed")]))
 
@@ -200,7 +202,7 @@ struct TranscriptBuilderTests {
     #expect(builder.elements(for: TranscriptInput(transcript: transcript, pending: pending, isLive: true)).map(\.shape) == [
       "prompt(Go)", "tool(Running rm\u{2026})", "permission(r1)", "tool(Reading a)", "permission(r2)"
     ])
-    #expect(builder.elements(for: TranscriptInput(transcript: transcript, isLive: true)).map(\.shape) == ["prompt(Go)", "tool(Running rm\u{2026})", "tool(Reading a)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: transcript, isLive: true)).map(\.shape) == ["prompt(Go)", "group(Ran a command, read a file)"])
   }
 
   @Test func taskListFollowsTheRunningTurnsFirstBlock() throws {
@@ -293,5 +295,50 @@ struct TranscriptBuilderTests {
 
     #expect(Array(second.prefix(first.count)) == first)
     #expect(second.last?.shape == "reply(Three.)")
+  }
+
+  @Test func runningTurnFoldsItsLastCallsUnderTheActivity() throws {
+    let frames = [prompt("Go"), call("t1", "Bash", ["command": "ls", "description": "List files"]), returned("t1", "a"), call("t2", "Bash", ["command": "make", "description": "Build it"])]
+    var builder = makeBuilder()
+    let activity = Activity(text: "Building it", since: .now)
+    let running = builder.elements(for: TranscriptInput(transcript: try transcript(frames), isLive: true, activity: activity)).map(\.shape)
+    let replied = builder.elements(for: TranscriptInput(transcript: try transcript(frames + [returned("t2", "ok"), said("Built.")]), isLive: true, activity: activity)).map(\.shape)
+
+    #expect(running == ["prompt(Go)", "live(Building it)"])
+    #expect(replied == ["prompt(Go)", "group(Ran 2 commands)", "reply(Built.)", "activity(Building it)"])
+  }
+
+  @Test func failedCommandKeepsItsDescriptionAndWriteOverAFileReadsAsAnUpdate() throws {
+    let rows = try transcript([
+      prompt("Go"),
+      call("t1", "Bash", ["command": "make", "description": "Build the app"]), returned("t1", "Exit code 2", isError: true),
+      said("Fixing."),
+      call("t2", "Write", ["file_path": "/tmp/A.swift"]), returned("t2", "updated", output: ["type": "update"]),
+      said("Done.")
+    ])
+
+    #expect(shapes(rows) == ["prompt(Go)", "tool(Build the app)", "reply(Fixing.)", "tool(Updated A.swift)", "reply(Done.)"])
+  }
+
+  @Test func commandRunFromACodeBlockShowsItsOutputUnderTheBlock() throws {
+    let reply = "Run this:\n\n```bash\nlook.sh 1\n```\n\nThen tell me."
+    let ran = prompt("<bash-input>look.sh 1</bash-input><bash-stdout>shot 1 -&gt; bloom</bash-stdout><bash-stderr></bash-stderr>", at: "10:05:00")
+    let other = prompt("<bash-input>date</bash-input><bash-stdout>Tue</bash-stdout><bash-stderr></bash-stderr>", at: "10:06:00")
+
+    let shown = shapes(try transcript([prompt("Go"), said(reply), finished(), ran, finished(), other]))
+
+    #expect(shown == [
+      "prompt(Go)", "reply(Run this:\n\n```bash\nlook.sh 1\n```)", "shell(shot 1 -> bloom)", "reply(Then tell me.)", "footer(1m 52s)", "shell(date | Tue)"
+    ])
+  }
+
+  @Test func imageResultsBecomeThumbnails() throws {
+    let image: JSONValue = ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="]]
+    let result: JSONValue = ["type": "user", "uuid": "r-t1", "message": ["content": [["type": "tool_result", "tool_use_id": "t1", "content": [image], "is_error": false]]], "parent_tool_use_id": nil]
+    var builder = makeBuilder()
+    let elements = builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go"), call("t1", "Read", ["file_path": "/tmp/a.png"]), result, call("t2", "Bash", ["command": "ls"]), returned("t2", "a")])))
+
+    guard case .group(let group) = elements.last?.kind else { return #expect(Bool(false), "The group is missing") }
+    #expect(group.thumbnails.map(\.id) == ["t1/0"])
   }
 }

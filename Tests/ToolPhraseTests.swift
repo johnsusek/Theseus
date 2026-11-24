@@ -26,6 +26,11 @@ struct ToolPhraseTests {
     #expect(["Run the tests", "Stop the server", "Create a file", "Copy notes", "Commit it", "Show status"].map { conjugated($0, isRunning: false) } == ["Ran the tests", "Stopped the server", "Created a file", "Copied notes", "Committed it", "Showed status"])
     #expect(["Run the tests", "Stop the server", "Create a file", "Tie it", "Open it"].map { conjugated($0, isRunning: true) } == ["Running the tests", "Stopping the server", "Creating a file", "Tying it", "Opening it"])
     #expect(conjugated("Checking status", isRunning: false) == "Checking status")
+    #expect(conjugated("Generate the wallpapers and preview bloom's crop", isRunning: true) == "Generating the wallpapers and previewing bloom's crop")
+    #expect(conjugated("Capture shot 1 and render it", isRunning: false) == "Captured shot 1 and rendered it")
+    #expect(conjugated("Build and test", isRunning: false) == "Built and tested")
+    #expect(conjugated("Compare light and dark mode", isRunning: false) == "Compared light and dark mode")
+    #expect(conjugated("List files and folders", isRunning: false) == "Listed files and folders")
     #expect(conjugated("git: status", isRunning: false) == "git: status")
     #expect(toolActivity("Bash", input: ["command": "ls", "description": "List files"]) == "Listing files")
   }
@@ -41,6 +46,7 @@ struct ToolPhraseTests {
   @Test func summaryCountsEachKindOfCall() {
     #expect(toolSummary([("Read", "a.swift"), ("Read", "b.swift"), ("Bash", "swift test")]).map(\.text).joined() == "Read 2 files, ran a command")
     #expect(toolSummary([("Edit", "a.swift"), ("Grep", "TODO"), ("Glob", "*.swift"), ("MultiEdit", "b.swift")]).map(\.text).joined() == "Made 2 edits, ran 2 searches")
-    #expect(toolSummary([("Write", "notes.md"), ("mcp__SafariPilot__click", "")]) == [SummaryPart(text: "Created "), SummaryPart(text: "notes.md", isTarget: true), SummaryPart(text: ", used SafariPilot click")])
+    #expect(toolSummary([("Write", "notes.md"), ("mcp__SafariPilot__click", "")]) == [SummaryPart(text: "Created a file"), SummaryPart(text: ", used SafariPilot click")])
+    #expect(toolSummary([("WebFetch", "example.com")]) == [SummaryPart(text: "Fetched "), SummaryPart(text: "example.com", isTarget: true)])
   }
 }

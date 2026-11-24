@@ -49,25 +49,46 @@ struct TranscriptRendererTests {
     #expect(text.attribute(.activeTint, at: 0, effectiveRange: nil) == nil)
   }
 
-  @Test func runningAndFailedRowsCarryAMark() {
-    var marks: [StatusMark] = []
+  @Test func runningRowsCarryAMarkAndFailedRowsSaySo() {
+    var marks = 0
     var renderer = TranscriptRenderer()
-    renderer.mark = { mark in
-      marks.append(mark)
+    renderer.mark = {
+      marks += 1
       return NSTextAttachment()
     }
 
     let running = renderer.attributedString(for: TranscriptElement(id: "t1", kind: .tool(ToolRow(id: "t1", verb: "Running", target: "swift test", state: .running))))
     let waiting = renderer.attributedString(for: TranscriptElement(id: "t2", kind: .tool(ToolRow(id: "t2", verb: "Editing", target: "A.swift", state: .waiting))))
-    let failed = renderer.attributedString(for: TranscriptElement(id: "t3", kind: .tool(ToolRow(id: "t3", verb: "Ran", target: "swift build", state: .failed))))
-
+    let failed = renderer.attributedString(for: TranscriptElement(id: "t3", kind: .tool(ToolRow(id: "t3", verb: "Build the app", target: "", state: .failed))))
+    let denied = renderer.attributedString(for: TranscriptElement(id: "t5", kind: .tool(ToolRow(id: "t5", verb: "Could not run", target: "rm", note: "Denied", state: .failed))))
     let stopped = renderer.attributedString(for: TranscriptElement(id: "t4", kind: .tool(ToolRow(id: "t4", verb: "Running", target: "sleep 600", state: .stopped))))
 
-    #expect(marks == [.running, .running, .failed])
+    #expect(marks == 2)
     #expect(running.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "@ Running swift test  @\n")
     #expect(waiting.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "@ Editing A.swift  Needs Approval  @\n")
-    #expect(failed.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "Ran swift build @  @\n")
+    #expect(failed.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "Build the app  Failed  @\n")
+    #expect(failed.attribute(.foregroundColor, at: failed.string.count - 5, effectiveRange: nil) as? NSColor == .systemRed)
+    #expect(denied.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "Could not run rm  Denied  @\n")
     #expect(stopped.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "Running sleep 600  Stopped  @\n")
+  }
+
+  @Test func liveGroupsShowTheActivityAndTimerAndRowsShowThumbnails() {
+    var clocks: [Bool?] = []
+    var renderer = TranscriptRenderer()
+    renderer.columnWidth = 600
+    renderer.clock = { _, chevron in
+      clocks.append(chevron)
+      return NSTextAttachment()
+    }
+
+    let live = renderer.attributedString(for: TranscriptElement(id: "g", kind: .group(GroupRow(id: "g", summary: [SummaryPart(text: "Ran 2 commands")], added: 3, activity: Activity(text: "Building the app", since: .now)))))
+    let row = renderer.attributedString(for: TranscriptElement(id: "t1", kind: .tool(ToolRow(id: "t1", verb: "Read", target: "a.png", thumbnails: [Thumbnail(id: "t1/0", data: Data())]))))
+
+    #expect(clocks == [false])
+    #expect(live.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "@ Building the app  @\n")
+    #expect(row.string.replacingOccurrences(of: "\u{FFFC}", with: "@") == "Read a.png  @\t@\n")
+    #expect((row.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.tabStops.map(\.location) == [566])
+    #expect(row.attribute(.fitsColumn, at: 0, effectiveRange: nil) as? Bool == true)
   }
 
   @Test func boxedRowsAndDetailCarryTheBorder() {

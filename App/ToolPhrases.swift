@@ -21,14 +21,14 @@ struct ToolPhrase: Equatable {
   }
 }
 
-private let editPhrase = ToolPhrase("Edited", "Editing", "Could not edit", "edited %@", "made %d edits")
+private let editPhrase = ToolPhrase("Edited", "Editing", "Could not edit", "edited a file", "made %d edits")
 private let searchPhrase = ToolPhrase("Searched for", "Searching for", "Could not search for", "ran a search", "ran %d searches")
 private let agentPhrase = ToolPhrase("Ran agent", "Running agent", "Could not run agent", "ran an agent", "ran %d agents")
 private let taskListPhrase = ToolPhrase("Checked the task list", "Checking the task list", "Could not check the task list", "checked the task list", "checked the task list %d times")
 
 private let toolPhrases: [String: ToolPhrase] = [
-  "Read": ToolPhrase("Read", "Reading", "Could not read", "read %@", "read %d files"),
-  "Write": ToolPhrase("Created", "Creating", "Could not create", "created %@", "created %d files"),
+  "Read": ToolPhrase("Read", "Reading", "Could not read", "read a file", "read %d files"),
+  "Write": ToolPhrase("Created", "Creating", "Could not create", "created a file", "created %d files"),
   "Edit": editPhrase,
   "MultiEdit": editPhrase,
   "NotebookEdit": editPhrase,
@@ -187,8 +187,23 @@ func conjugated(_ description: String, isRunning: Bool) -> String {
 
   if first.first?.isUppercase == true { verb = verb.prefix(1).uppercased() + verb.dropFirst() }
 
-  return verb + description.dropFirst(first.count)
+  var rest = String(description.dropFirst(first.count))
+
+  // "Generate the files and preview the crop": a second verb is taken as one when an object or nothing follows it.
+  if let range = rest.range(of: " and ") {
+    let words = rest[range.upperBound...].split(separator: " ", maxSplits: 2)
+    let next = words.count > 1 ? words[1].lowercased() : nil
+
+    // A plural noun ends in "s"; a verb seldom does.
+    if let second = words.first, second.allSatisfy(\.isLowercase), !second.hasSuffix("s") || second.hasSuffix("ss"), next.map({ objectWords.contains($0) || $0.hasSuffix("'s") || $0.hasSuffix("\u{2019}s") }) ?? true {
+      rest = rest[..<range.upperBound] + conjugated(String(rest[range.upperBound...]), isRunning: isRunning)
+    }
+  }
+
+  return verb + rest
 }
+
+private let objectWords: Set = ["the", "a", "an", "it", "them", "its", "their", "this", "that", "these", "those", "each", "every", "all", "any", "some", "my", "your", "our", "his", "her"]
 
 /// The first line of `text`, with the middle cut out when it is longer than `limit`.
 func oneLine(_ text: String, limit: Int) -> String {

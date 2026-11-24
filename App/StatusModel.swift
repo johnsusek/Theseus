@@ -190,12 +190,3 @@ func elapsedText(_ seconds: Int) -> String {
 
   return "\(minutes / 60)h " + String(format: "%02dm", minutes % 60)
 }
-
-/// A counting timer: "0:07", "3:19", "1:02:03".
-func timerText(_ seconds: Int) -> String {
-  let tail = String(format: "%02d", seconds % 60)
-
-  if seconds < 3600 { return "\(seconds / 60):\(tail)" }
-
-  return "\(seconds / 3600):" + String(format: "%02d", seconds / 60 % 60) + ":\(tail)"
-}

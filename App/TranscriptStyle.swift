@@ -148,6 +148,8 @@ enum TranscriptStyle {
   static let font = NSFont.systemFont(ofSize: 15)
   static let callout = NSFont.systemFont(ofSize: 12)
   static let digits = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .regular)
+  /// An image a tool call returned, at the right edge of its row.
+  static let thumbnailSize = NSSize(width: 34, height: 20)
   static let calloutDigits = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
   static let code = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
   static let codeLineSpacing = 3.0

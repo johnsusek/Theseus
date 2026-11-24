@@ -85,10 +85,11 @@ final class TranscriptView: NSView {
     textView.onHover = { [unowned self] offset in hover(offset.flatMap { text.element(at: $0)?.turn }) }
 
     renderer.card = { [unowned self] element in card(for: element) }
-    renderer.mark = { [unowned self] mark in
-      ViewAttachment(size: NSSize(width: 18, height: 14)) { [state = layoutDelegate.state] in StatusMarkView(mark, isActive: state.isActive) }
+    renderer.mark = { [unowned self] in
+      ViewAttachment(size: NSSize(width: 18, height: 14)) { [state = layoutDelegate.state] in StatusMarkView(isActive: state.isActive) }
     }
-    renderer.clock = { since in ViewAttachment(size: ClockView.size) { ClockView(since: since) } }
+    renderer.clock = { since, chevron in ViewAttachment(size: ClockView.size) { ClockView(since: since, chevron: chevron) } }
+    renderer.thumbnail = { thumbnail in ViewAttachment(size: TranscriptStyle.thumbnailSize) { ThumbnailView(thumbnail) } }
 
     scrollView.documentView = textView
     scrollView.drawsBackground = false
