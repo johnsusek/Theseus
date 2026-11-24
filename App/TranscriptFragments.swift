@@ -109,6 +109,18 @@ final class DecoratedFragment: NSTextLayoutFragment {
     let tints: [Decoration.Fill: NSColor] = [.added: .systemGreen, .removed: .systemRed]
 
     context.saveGState()
+
+    // A code block is an outline. It runs past the slice where the block goes on, so only the block's ends draw a top or bottom edge.
+    if fill == .code {
+      context.clip(to: slice)
+      context.setStrokeColor(NSColor.separatorColor.cgColor)
+      context.setLineWidth(1)
+      context.addPath(CGPath(roundedRect: clip.insetBy(dx: 0.5, dy: 0.5), cornerWidth: radius, cornerHeight: radius, transform: nil))
+      context.strokePath()
+      context.restoreGState()
+      return
+    }
+
     context.addPath(CGPath(roundedRect: clip, cornerWidth: radius, cornerHeight: radius, transform: nil))
     context.clip()
 
@@ -118,7 +130,7 @@ final class DecoratedFragment: NSTextLayoutFragment {
       context.setFillColor(tint.cgColor)
       context.fill(CGRect(x: slice.minX, y: slice.minY, width: 3, height: slice.height))
     } else {
-      context.setFillColor((fill == .bubble ? NSColor.tertiarySystemFill : .quaternarySystemFill).cgColor)
+      context.setFillColor(NSColor.tertiarySystemFill.cgColor)
       context.fill(slice)
     }
 

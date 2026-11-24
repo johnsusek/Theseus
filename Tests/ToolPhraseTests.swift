@@ -20,6 +20,16 @@ struct ToolPhraseTests {
     #expect(toolTarget("TaskUpdate", input: ["taskId": "1"]) == "")
   }
 
+  @Test func descriptionsTakeTheRowsTense() {
+    #expect(conjugated("List project folder contents", isRunning: false) == "Listed project folder contents")
+    #expect(conjugated("List project folder contents", isRunning: true) == "Listing project folder contents")
+    #expect(["Run the tests", "Stop the server", "Create a file", "Copy notes", "Commit it", "Show status"].map { conjugated($0, isRunning: false) } == ["Ran the tests", "Stopped the server", "Created a file", "Copied notes", "Committed it", "Showed status"])
+    #expect(["Run the tests", "Stop the server", "Create a file", "Tie it", "Open it"].map { conjugated($0, isRunning: true) } == ["Running the tests", "Stopping the server", "Creating a file", "Tying it", "Opening it"])
+    #expect(conjugated("Checking status", isRunning: false) == "Checking status")
+    #expect(conjugated("git: status", isRunning: false) == "git: status")
+    #expect(toolActivity("Bash", input: ["command": "ls", "description": "List files"]) == "Listing files")
+  }
+
   @Test func longCommandsLoseTheirMiddle() {
     let command = String(repeating: "a", count: 60) + String(repeating: "b", count: 60)
     let cut = oneLine(command, limit: 80)

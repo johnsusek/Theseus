@@ -25,7 +25,7 @@ struct TranscriptRendererTests {
     #expect(width > 30 && width < 80)
     #expect(style?.headIndent == TranscriptStyle.bubbleIndent(textWidth: width, columnWidth: 720))
     #expect((style?.headIndent ?? 0) > 600)
-    #expect(style?.paragraphSpacingBefore == CGFloat(27))
+    #expect(style?.paragraphSpacingBefore == CGFloat(30))
   }
 
   @Test func longPromptStartsAfterTheLead() {
@@ -75,15 +75,15 @@ struct TranscriptRendererTests {
     let detail = TranscriptElement(id: "t1/detail", kind: .detail([.command("$ ls"), .diff([" keep", "-old", "+new"])]), spacing: 0, box: BoxSlot(isLast: true))
     let rowText = renderer.attributedString(for: row)
     let detailText = renderer.attributedString(for: detail)
-    let boxes = [0, 5, 11, 16].map { (detailText.attribute(.decoration, at: $0, effectiveRange: nil) as? DecorationValue)?.decoration.box }
+    let boxes = [0, 5, 10, 14].map { (detailText.attribute(.decoration, at: $0, effectiveRange: nil) as? DecorationValue)?.decoration.box }
 
     #expect((rowText.attribute(.decoration, at: 0, effectiveRange: nil) as? DecorationValue)?.decoration.box == Decoration.Box(isFirst: true, isLast: false, topGap: 8, hasDivider: false))
     #expect(paragraphStyle(rowText)?.headIndent == CGFloat(Decoration.boxInset))
     #expect(paragraphStyle(rowText)?.paragraphSpacingBefore == CGFloat(16))
-    #expect(detailText.string == "$ ls\n keep\n-old\n+new\n")
+    #expect(detailText.string == "$ ls\nkeep\nold\nnew\n")
     #expect(boxes.map { $0?.isLast } == [false, false, false, true])
-    #expect([0, 5, 11, 16].map { (detailText.attribute(.decoration, at: $0, effectiveRange: nil) as? DecorationValue)?.decoration.fill } == [.code, nil, .removed, .added])
-    #expect(paragraphStyle(detailText, at: 16)?.paragraphSpacing == CGFloat(8))
+    #expect([0, 5, 10, 14].map { (detailText.attribute(.decoration, at: $0, effectiveRange: nil) as? DecorationValue)?.decoration.fill } == [.code, nil, .removed, .added])
+    #expect(paragraphStyle(detailText, at: 14)?.paragraphSpacing == CGFloat(8))
   }
 
   @Test func cardsAreOneAttachment() {
@@ -104,8 +104,15 @@ struct TranscriptRendererTests {
   @Test func permissionBodyTintsAnEdit() {
     let body = renderer.permissionBody(.diff([" keep", "-old", "+new"]))
 
-    #expect(body.string == " keep\n-old\n+new")
-    #expect([0, 6, 11].map { (body.attribute(.decoration, at: $0, effectiveRange: nil) as? DecorationValue)?.decoration.fill } == [nil, .removed, .added])
+    #expect(body.string == "keep\nold\nnew")
+    #expect([0, 5, 9].map { (body.attribute(.decoration, at: $0, effectiveRange: nil) as? DecorationValue)?.decoration.fill } == [nil, .removed, .added])
+  }
+
+  @Test func hunkHeadersNumberTheLines() {
+    let body = renderer.permissionBody(.diff(["@@ -3,2 +3,3 @@", " keep", "-old", "+new", "+more", "@@ -9,1 +10,1 @@", " ten"]))
+
+    #expect(body.string == "\t3\tkeep\n\t4\told\n\t4\tnew\n\t5\tmore\n\t\t\u{22EF}\n\t10\tten")
+    #expect(renderer.permissionBody(.diff(["+a", "+b"])).string == "\t1\ta\n\t2\tb")
   }
 
   @Test func decoratedTextCanBeArchived() throws {

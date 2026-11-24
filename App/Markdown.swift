@@ -58,6 +58,11 @@ enum Markdown {
         parsed[0].restyle { $0.paragraphSpacingBefore = padding }
       }
 
+      // A list ends at a chunk's end, so the room a list leaves under it is added here.
+      if index > 0, !parsed.isEmpty, let last = chunks[index - 1].split(separator: "\n").last, last.wholeMatch(of: /\s*([-*+]|\d+[.)])\s.*|\s+\S.*/) != nil, (try? /\s*([-*+]|\d+[.)])\s/.prefixMatch(in: text)) == nil {
+        parsed[0].restyle { $0.paragraphSpacingBefore += listGap }
+      }
+
       result += parsed
     }
 
@@ -103,7 +108,9 @@ enum Markdown {
     return chunks
   }
 
-  private static let blockSpacing = 10.0
+  private static let blockSpacing = 12.0
+  /// Extra room under a list.
+  private static let listGap = 10.0
 
   private static func parse(_ text: String, style: MarkdownStyle) -> [Paragraph] {
     guard let parsed = try? AttributedString(markdown: text, options: options) else {
@@ -146,7 +153,7 @@ enum Markdown {
         case .orderedList, .unorderedList:
           isOrdered = component.kind == .orderedList
           listStart = left
-          left += 26
+          left += 33
         case .listItem(let ordinal):
           // Only an item's first block carries its marker.
           marker = seenItems.insert(component.identity).inserted ? (isOrdered ? "\(ordinal)." : "\u{2022}") : nil
@@ -191,12 +198,14 @@ enum Markdown {
 
       if marker != nil, wasListItem { before = 4 }
 
+      if listStart == nil, wasListItem { before += listGap }
+
       wasListItem = listStart != nil
       var decoration = Decoration(quoteBars: quoteBars)
 
       if code {
         let source = block.runs.map { String(parsed[$0.range].characters) }.joined()
-        paragraphs += codeLines(source.hasSuffix("\n") ? String(source.dropLast()) : source, left: left, right: style.right, before: before, color: style.color, quoteBars: quoteBars)
+        paragraphs += codeLines(source.hasSuffix("\n") ? String(source.dropLast()) : source, left: left, right: style.right, before: before, color: style.color, quoteBars: quoteBars, width: style.width)
         continue
       }
 
@@ -217,8 +226,8 @@ enum Markdown {
 
       if let marker, let listStart {
         paragraph.firstLineHeadIndent = listStart
-        paragraph.tabStops = [NSTextTab(textAlignment: .right, location: listStart + 18), NSTextTab(textAlignment: .left, location: left)]
-        content.insert(TranscriptStyle.text("\t\(marker)\t", font: style.font, color: .secondaryLabelColor), at: 0)
+        paragraph.tabStops = [NSTextTab(textAlignment: .right, location: listStart + 23), NSTextTab(textAlignment: .left, location: left)]
+        content.insert(TranscriptStyle.text("\t\(marker)\t", font: style.font, color: style.color), at: 0)
       }
 
       var base: [NSAttributedString.Key: Any] = [.paragraphStyle: paragraph, .font: font, .foregroundColor: style.color]
@@ -232,16 +241,24 @@ enum Markdown {
   }
 
   /// Monospaced lines on one rounded background, a paragraph per line.
-  static func codeLines(_ source: String, left: CGFloat, right: CGFloat, before: CGFloat, color: NSColor = .labelColor, quoteBars: [CGFloat] = []) -> [Paragraph] {
+  /// With a column `width`, the block is only as wide as its widest line.
+  static func codeLines(_ source: String, left: CGFloat, right: CGFloat, before: CGFloat, color: NSColor = .labelColor, quoteBars: [CGFloat] = [], width: CGFloat = .infinity) -> [Paragraph] {
     let lines = source.components(separatedBy: "\n")
+    let widest = lines.map { ceil(TranscriptStyle.text($0, font: TranscriptStyle.code).size().width) }.max() ?? 0
+    let right = width.isFinite ? max(right, width - left - widest - 2 * Decoration.codeInset - 1) : right
 
     return lines.enumerated().map { index, line in
       let isFirst = index == 0
       let isLast = index == lines.count - 1
       let padding = Decoration.Fill.code.padding
-      let style = TranscriptStyle.paragraph(before: isFirst ? before + padding : 0, after: isLast ? padding : 0, indent: left + 12, tail: right + 12)
+      // TextKit 2 puts the line spacing above each line, the first included.
+      let style = TranscriptStyle.paragraph(before: isFirst ? before + padding - TranscriptStyle.codeLineSpacing : 0, after: isLast ? padding : 0, indent: left + Decoration.codeInset, tail: right + Decoration.codeInset, lineSpacing: TranscriptStyle.codeLineSpacing)
       let decoration = Decoration(fill: .code, left: left, right: right, roundsTop: isFirst, roundsBottom: isLast, quoteBars: quoteBars)
-      return Paragraph(content: TranscriptStyle.text(line, font: TranscriptStyle.code, color: color), base: [.paragraphStyle: style, .decoration: DecorationValue(decoration), .font: TranscriptStyle.code, .foregroundColor: color])
+      var base: [NSAttributedString.Key: Any] = [.paragraphStyle: style, .decoration: DecorationValue(decoration), .font: TranscriptStyle.code, .foregroundColor: color]
+
+      if width.isFinite { base[.fitsColumn] = true }
+
+      return Paragraph(content: TranscriptStyle.text(line, font: TranscriptStyle.code, color: color), base: base)
     }
   }
 
@@ -351,13 +368,34 @@ enum Markdown {
     return lines
   }
 
+  /// Straight quotes as typographic ones. A quote opens at the start, after a space or after an opening bracket or quote.
+  static func curled(_ text: String, after previous: Character?) -> String {
+    var result = ""
+    var before = previous
+
+    for character in text {
+      let opens = before.map { $0.isWhitespace || "([{\u{201C}\u{2018}\u{2014}\u{2013}".contains($0) } ?? true
+
+      switch character {
+      case "\"": result.append(opens ? "\u{201C}" : "\u{201D}")
+      case "'": result.append(opens ? "\u{2018}" : "\u{2019}")
+      default: result.append(character)
+      }
+
+      before = character
+    }
+
+    return result
+  }
+
   private static func inline(_ parsed: AttributedString, runs: [AttributedString.Runs.Run], font: NSFont, color: NSColor) -> NSMutableAttributedString {
     let result = NSMutableAttributedString()
 
     for run in runs {
       let intent = run.inlinePresentationIntent ?? []
       // A hard break stays inside its paragraph as a line separator.
-      let text = intent.contains(.lineBreak) ? "\u{2028}" : String(parsed[run.range].characters)
+      let source = String(parsed[run.range].characters)
+      let text = intent.contains(.lineBreak) ? "\u{2028}" : intent.contains(.code) ? source : curled(source, after: result.string.last)
       var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
       var traits = font.fontDescriptor.symbolicTraits
 

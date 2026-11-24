@@ -46,9 +46,9 @@ struct TranscriptRenderer {
   func permissionBody(_ body: PermissionPrompt.Body) -> NSAttributedString {
     switch body {
     case .diff(let lines):
-      codeLines(lines, tinted: true, inset: 0, color: .labelColor).joined(terminated: false)
+      diffLines(lines, inset: 0).joined(terminated: false)
     case .code(let text):
-      codeLines(text.components(separatedBy: "\n"), tinted: false, inset: 0, color: .labelColor).joined(terminated: false)
+      codeLines(text.components(separatedBy: "\n"), inset: 0, color: .labelColor).joined(terminated: false)
     case .markdown(let text):
       Markdown.paragraphs(text, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), lineSpacing: 3)).joined(terminated: false)
     case .text(let text):
@@ -181,9 +181,9 @@ struct TranscriptRenderer {
       case .command(let text):
         added = Markdown.codeLines(text, left: inset, right: inset, before: before)
       case .output(let text):
-        added = codeLines(text.components(separatedBy: "\n"), tinted: false, inset: inset, color: .secondaryLabelColor)
+        added = codeLines(text.components(separatedBy: "\n"), inset: inset, color: .labelColor)
       case .diff(let lines):
-        added = codeLines(lines, tinted: true, inset: inset, color: .secondaryLabelColor)
+        added = diffLines(lines, inset: inset)
       case .report(let text):
         added = Markdown.paragraphs(text, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), color: .secondaryLabelColor, lineSpacing: 3, left: inset, right: inset, width: columnWidth))
       case .more(let id, let hidden):
@@ -205,18 +205,71 @@ struct TranscriptRenderer {
     return paragraphs
   }
 
-  /// Monospaced lines. A patch's added and removed lines get a tinted row with a bar at its leading edge.
-  private func codeLines(_ lines: [String], tinted: Bool, inset: CGFloat, color: NSColor) -> [Paragraph] {
+  /// Monospaced lines.
+  private func codeLines(_ lines: [String], inset: CGFloat, color: NSColor) -> [Paragraph] {
+    lines.map { text in
+      Paragraph(content: TranscriptStyle.text(text, font: TranscriptStyle.code, color: color), base: [.paragraphStyle: TranscriptStyle.paragraph(indent: inset + 10, tail: inset + 4, lineSpacing: TranscriptStyle.codeLineSpacing), .font: TranscriptStyle.code, .foregroundColor: color])
+    }
+  }
+
+  /// Patch lines without their `+`, `-` or space. Added and removed lines get a tinted row with a bar at its leading edge.
+  /// After a hunk header, or in a new file, each line follows its number in the file: the new number, or the old one for a removed line.
+  private func diffLines(_ lines: [String], inset: CGFloat) -> [Paragraph] {
     let fills: [Character: Decoration.Fill] = ["+": .added, "-": .removed]
+    var rows: [(number: Int?, text: String, fill: Decoration.Fill?, isGap: Bool)] = []
+    var next: (old: Int, new: Int)? = lines.allSatisfy { $0.hasPrefix("+") } ? (1, 1) : nil
 
-    return lines.enumerated().map { index, text in
-      var base: [NSAttributedString.Key: Any] = [.paragraphStyle: TranscriptStyle.paragraph(indent: inset + 10, tail: inset + 4), .font: TranscriptStyle.code, .foregroundColor: color]
+    for line in lines {
+      if let match = line.prefixMatch(of: /@@ -(\d+)(?:,\d+)? \+(\d+)/) {
+        // The first hunk's header only sets the numbers; a later one leaves a gap where lines were skipped.
+        if !rows.isEmpty { rows.append((nil, "\u{22EF}", nil, true)) }
 
-      if tinted, let fill = text.first.flatMap({ fills[$0] }) {
-        base[.decoration] = DecorationValue(Decoration(fill: fill, left: inset, right: inset, roundsTop: index == 0, roundsBottom: index == lines.count - 1))
+        next = (Int(match.1) ?? 1, Int(match.2) ?? 1)
+        continue
       }
 
-      return Paragraph(content: TranscriptStyle.text(text, font: TranscriptStyle.code, color: color), base: base)
+      let marker = line.first
+      var number: Int?
+
+      if var counts = next, marker == "+" || marker == "-" || marker == " " {
+        number = marker == "-" ? counts.old : counts.new
+
+        if marker != "+" { counts.old += 1 }
+
+        if marker != "-" { counts.new += 1 }
+
+        next = counts
+      }
+
+      let isChange = marker.map { fills[$0] != nil || $0 == " " } ?? false
+      rows.append((number, isChange ? String(line.dropFirst()) : line, marker.flatMap { fills[$0] }, false))
+    }
+
+    let digits = rows.compactMap(\.number).max().map { String($0).count } ?? 0
+    let gutter = digits == 0 ? 0 : ceil(TranscriptStyle.text(String(repeating: "0", count: digits), font: TranscriptStyle.code).size().width) + 12
+    let start = inset + 10
+
+    return rows.enumerated().map { index, row in
+      let style = TranscriptStyle.paragraph(indent: start + gutter, tail: inset + 4, lineSpacing: TranscriptStyle.codeLineSpacing)
+      let content = NSMutableAttributedString()
+      let color = row.isGap ? NSColor.tertiaryLabelColor : .labelColor
+      style.firstLineHeadIndent = start
+
+      if gutter > 0 {
+        style.tabStops = [NSTextTab(textAlignment: .right, location: start + gutter - 12), NSTextTab(textAlignment: .left, location: start + gutter)]
+        content.append(TranscriptStyle.text("\t" + (row.number.map(String.init) ?? "") + "\t", font: TranscriptStyle.code, color: .tertiaryLabelColor))
+      }
+
+      content.append(TranscriptStyle.text(row.text, font: TranscriptStyle.code, color: color))
+      var base: [NSAttributedString.Key: Any] = [.paragraphStyle: style, .font: TranscriptStyle.code, .foregroundColor: color]
+
+      if let fill = row.fill {
+        let isFirst = index == 0 || rows[index - 1].fill != fill
+        let isLast = index == rows.count - 1 || rows[index + 1].fill != fill
+        base[.decoration] = DecorationValue(Decoration(fill: fill, left: inset, right: inset, roundsTop: isFirst, roundsBottom: isLast))
+      }
+
+      return Paragraph(content: content, base: base)
     }
   }
 }

@@ -22,7 +22,7 @@ struct Decoration: Hashable, Sendable, Codable {
 
     var radius: CGFloat {
       switch self {
-      case .bubble: 16
+      case .bubble: 12
       case .code: 8
       case .added, .removed: 6
       }
@@ -31,8 +31,8 @@ struct Decoration: Hashable, Sendable, Codable {
     /// How far the fill reaches above the first line and below the last.
     var padding: CGFloat {
       switch self {
-      case .bubble: 9
-      case .code: 8
+      case .bubble: 12
+      case .code: 12
       case .added, .removed: 1
       }
     }
@@ -52,11 +52,13 @@ struct Decoration: Hashable, Sendable, Codable {
 
   /// A bubble leaves at least `bubbleLead` of the column free on its left, and pads its text by `bubbleInset`.
   static let bubbleLead = 80.0
-  static let bubbleInset = 14.0
+  static let bubbleInset = 16.0
   /// Rows and their detail sit this far inside a group's border.
   static let boxInset = 12.0
   /// How far an inline code chip reaches past its text on each side.
   static let chipPadding = 4.0
+  /// A code block's text sits this far inside its border.
+  static let codeInset = 16.0
 
   var fill: Fill?
   /// The fill's left edge in the column, and how far its right edge stops short of the column's. A bubble starts at its text instead.
@@ -147,7 +149,8 @@ enum TranscriptStyle {
   static let callout = NSFont.systemFont(ofSize: 12)
   static let digits = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .regular)
   static let calloutDigits = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-  static let code = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+  static let code = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+  static let codeLineSpacing = 3.0
   private static var symbols: [String: NSTextAttachment] = [:]
 
   static func paragraph(before: CGFloat = 0, after: CGFloat = 0, indent: CGFloat = 0, tail: CGFloat = 0, lineSpacing: CGFloat = 0) -> NSMutableParagraphStyle {

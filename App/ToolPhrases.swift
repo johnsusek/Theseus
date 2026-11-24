@@ -50,14 +50,53 @@ private let toolPhrases: [String: ToolPhrase] = [
   "AskUserQuestion": ToolPhrase("Asked a question", "Asking a question", "Could not ask a question", "asked a question", "asked %d questions")
 ]
 
+/// The desktop app's browser tools, keyed by tool name, or by name and action for its `computer` tool.
+private let browser = "mcp__Claude_Browser__"
+private let clickPhrase = ToolPhrase("Clicked", "Clicking", "Could not click", "clicked", "clicked")
+private let readPagePhrase = ToolPhrase("Read page", "Reading page", "Could not read page", "read page", "read page")
+
+private let browserPhrases: [String: ToolPhrase] = [
+  "preview_start": ToolPhrase("Started preview", "Starting preview", "Could not start preview", "started preview", "started %d previews"),
+  "navigate": ToolPhrase("Opened page", "Opening page", "Could not open page", "opened page", "opened %d pages"),
+  "javascript_tool": ToolPhrase("Ran page script", "Running page script", "Could not run page script", "ran page script", "ran %d page scripts"),
+  "find": ToolPhrase("Found", "Finding", "Could not find", "found", "found"),
+  "read_page": readPagePhrase,
+  "get_page_text": readPagePhrase,
+  "form_input": ToolPhrase("Filled form", "Filling form", "Could not fill form", "filled form", "filled form"),
+  "computer/screenshot": ToolPhrase("Captured page", "Capturing page", "Could not capture page", "captured page", "captured page"),
+  "computer/zoom": ToolPhrase("Captured page", "Capturing page", "Could not capture page", "captured page", "captured page"),
+  "computer/left_click": clickPhrase,
+  "computer/right_click": clickPhrase,
+  "computer/double_click": clickPhrase,
+  "computer/triple_click": clickPhrase,
+  "computer/type": ToolPhrase("Typed", "Typing", "Could not type", "typed", "typed"),
+  "computer/key": ToolPhrase("Pressed key", "Pressing key", "Could not press key", "pressed key", "pressed keys"),
+  "computer/scroll": ToolPhrase("Scrolled", "Scrolling", "Could not scroll", "scrolled", "scrolled"),
+  "computer/scroll_to": ToolPhrase("Scrolled", "Scrolling", "Could not scroll", "scrolled", "scrolled"),
+  "computer/hover": ToolPhrase("Hovered", "Hovering", "Could not hover", "hovered", "hovered"),
+  "computer/wait": ToolPhrase("Waited", "Waiting", "Could not wait", "waited", "waited")
+]
+
 private let fileTools: Set<String> = ["Read", "Write", "Edit", "MultiEdit", "NotebookEdit"]
 
 /// A tool without a phrase of its own reads "Used <name>".
 func toolPhrase(for name: String) -> ToolPhrase {
-  if let phrase = toolPhrases[name] { return phrase }
+  if let phrase = toolPhrases[name] ?? (name.hasPrefix(browser) ? browserPhrases[String(name.dropFirst(browser.count))] : nil) { return phrase }
 
   let display = toolDisplayName(name)
   return ToolPhrase("Used \(display)", "Using \(display)", "Could not use \(display)", "used \(display)", "used \(display) %d times")
+}
+
+/// The names a call's phrases are looked up by: its own, a browser `computer` call's with its action, or one per action of a browser batch.
+func phraseNames(_ name: String, input: JSONValue) -> [String] {
+  if name == browser + "browser_batch" {
+    let names = (input["actions"]?.array ?? []).flatMap { phraseNames(browser + ($0["name"]?.string ?? ""), input: $0["input"] ?? [:]) }
+    return names.isEmpty ? [name] : names
+  }
+
+  if name == browser + "computer", let action = input["action"]?.string { return [name + "/" + action] }
+
+  return [name]
 }
 
 /// `mcp__SafariPilot__get_page_text` reads "SafariPilot get page text". A server named by a UUID is left out.
@@ -93,6 +132,7 @@ func toolTarget(_ name: String, input: JSONValue) -> String {
   case "WebSearch": return oneLine(input["query"]?.string ?? "", limit: 60)
   case "TaskCreate": return oneLine(input["subject"]?.string ?? "", limit: 60)
   case "Skill": return input["skill"]?.string ?? ""
+  case browser + "preview_start": return input["name"]?.string ?? ""
   default: return ""
   }
 }
@@ -107,9 +147,47 @@ func commandName(_ command: String) -> String {
   return name.count < rest.count ? name + "\u{2026}" : name
 }
 
-/// A running call as a sentence: "Reading TerminalView.swift".
+/// A running call as a sentence: "Reading TerminalView.swift", or a command's description: "Listing the project folder".
 func toolActivity(_ name: String, input: JSONValue) -> String {
-  [toolPhrase(for: name).present, toolTarget(name, input: input)].filter { !$0.isEmpty }.joined(separator: " ")
+  if name == "Bash", let description = input["description"]?.string, !description.isEmpty { return conjugated(description, isRunning: true) }
+
+  return [toolPhrase(for: name).present, toolTarget(name, input: input)].filter { !$0.isEmpty }.joined(separator: " ")
+}
+
+private let pastForms = ["run": "ran", "rerun": "reran", "build": "built", "rebuild": "rebuilt", "make": "made", "find": "found", "read": "read", "write": "wrote", "rewrite": "rewrote", "get": "got", "set": "set", "put": "put", "send": "sent", "take": "took", "give": "gave", "keep": "kept", "do": "did", "undo": "undid", "go": "went", "begin": "began", "split": "split", "commit": "committed", "submit": "submitted", "fetch": "fetched"]
+
+/// A description written as a command, "List files", in the tense a row needs: "Listed files" when done, "Listing files" while running.
+/// A description that does not start with a plain verb stays as it is.
+func conjugated(_ description: String, isRunning: Bool) -> String {
+  let first = String(description.prefix { $0.isLetter })
+  let word = first.lowercased()
+  guard word.count > 1, word.count == description.prefix(while: { !$0.isWhitespace }).count, !word.hasSuffix("ing"), !word.hasSuffix("ed") else { return description }
+
+  // One vowel then one consonant at the end, as in "stop" and "plan", doubles the consonant.
+  let doubles = word.wholeMatch(of: /[^aeiou]*[aeiou][^aeiouwxy]/) != nil || ["commit", "submit"].contains(word)
+  var verb: String
+
+  if isRunning {
+    if word.hasSuffix("ie") {
+      verb = word.dropLast(2) + "ying"
+    } else if word.hasSuffix("e"), !word.hasSuffix("ee"), word != "be" {
+      verb = word.dropLast() + "ing"
+    } else {
+      verb = word + (doubles ? String(word.last!) : "") + "ing"
+    }
+  } else if let past = pastForms[word] {
+    verb = past
+  } else if word.hasSuffix("e") {
+    verb = word + "d"
+  } else if word.hasSuffix("y"), let before = word.dropLast().last, !"aeiou".contains(before) {
+    verb = word.dropLast() + "ied"
+  } else {
+    verb = word + (doubles ? String(word.last!) : "") + "ed"
+  }
+
+  if first.first?.isUppercase == true { verb = verb.prefix(1).uppercased() + verb.dropFirst() }
+
+  return verb + description.dropFirst(first.count)
 }
 
 /// The first line of `text`, with the middle cut out when it is longer than `limit`.

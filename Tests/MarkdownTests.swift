@@ -83,8 +83,14 @@ struct MarkdownTests {
   @Test func firstBlockSitsFlushAndLaterOnesAreSpaced() {
     let spacings = Markdown.paragraphs("One\n\n## Two\n\n- a\n- b\n\nThree").map(\.style.paragraphSpacingBefore)
 
-    #expect(spacings == [0, 18, 10, 4, 10])
+    #expect(spacings == [0, 18, 12, 4, 22])
     #expect(Markdown.paragraphs("```\ncode\n```")[0].style.paragraphSpacingBefore == Decoration.Fill.code.padding)
+  }
+
+  @Test func quotesCurlOutsideCode() {
+    #expect(Markdown.curled("\"hello\", it's 'done'", after: nil) == "\u{201C}hello\u{201D}, it\u{2019}s \u{2018}done\u{2019}")
+    #expect(Markdown.curled("\" ok", after: "a") == "\u{201D} ok")
+    #expect(Markdown.paragraphs("Say `\"x\"` and \"y\"").joined(terminated: false).string == "Say \"x\" and \u{201C}y\u{201D}")
   }
 
   @Test func chunkedParsingMatchesOnePass() {

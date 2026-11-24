@@ -297,7 +297,11 @@ struct TranscriptBuilder {
       built.elements.append(TranscriptElement(id: "\(turn.id)/prompt", kind: promptKind(prompt, origin: turn.origin), spacing: 22))
     }
 
-    let body = blocks(entries(turnId: String(turn.id), items: turn.items, streaming: streaming, context: context), tasks: key.tasks, context: context)
+    var body = blocks(entries(turnId: String(turn.id), items: turn.items, streaming: streaming, context: context), tasks: key.tasks, context: context)
+
+    // The desktop app leaves more room under a prompt than between a turn's own blocks.
+    if !built.elements.isEmpty, !body.elements.isEmpty { body.elements[0].spacing = 34 }
+
     built.elements += body.elements
     built.placed = body.placed
     built.agentIds = body.agentIds
@@ -418,8 +422,8 @@ struct TranscriptBuilder {
     case .tool(let id, let name, let input, let call):
       var row = row(id: id, name: name, input: input, call: call, context: context)
 
-      // A finished command on its own reads as a summary; its text is in the tooltip and the detail.
-      if name == "Bash", row.verb == toolPhrase(for: name).past {
+      // A finished command on its own with no description reads as a summary; its text is in the tooltip and the detail.
+      if name == "Bash", row.verb == toolPhrase(for: name).past, !row.target.isEmpty {
         row.verb = "Ran a command"
         row.target = ""
       }
@@ -448,7 +452,7 @@ struct TranscriptBuilder {
     for case .tool(let id, let name, let input, let call) in run {
       let row = row(id: id, name: name, input: input, call: call, context: context)
       rows.append((row, row.isExpanded ? detail(id: id, name: name, input: input, call: call, context: context) : []))
-      calls.append((name, row.target))
+      calls += phraseNames(name, input: input).map { ($0, row.target) }
 
       if context.agents[id] != nil { built.agentIds.append(id) }
     }
@@ -470,7 +474,8 @@ struct TranscriptBuilder {
   }
 
   private func row(id: String, name: String, input: JSONValue, call: ToolCall?, context: Context) -> ToolRow {
-    let phrase = toolPhrase(for: name)
+    let names = phraseNames(name, input: input)
+    let phrase = toolPhrase(for: names.count == 1 ? names[0] : name)
     let target = toolTarget(name, input: input)
     let duration = call?.duration.map(durationText)
     var row = ToolRow(id: id, verb: phrase.present, target: target, isExpanded: isVerbose || expanded.contains(id))
@@ -517,6 +522,18 @@ struct TranscriptBuilder {
       tips.append(duration)
 
       if isVerbose { notes.append(duration) }
+    }
+
+    // A command reads as its description, in the row's tense.
+    if name == "Bash", let description = input["description"]?.string, !description.isEmpty, row.verb == phrase.past || row.verb == phrase.present {
+      row.verb = conjugated(description, isRunning: row.verb == phrase.present)
+      row.target = ""
+    }
+
+    // A browser batch reads as the actions in it.
+    if names.count > 1 {
+      row.verb = toolSummary(names.map { ($0, "") }).map(\.text).joined()
+      row.target = ""
     }
 
     row.note = notes.joined(separator: " \u{B7} ")

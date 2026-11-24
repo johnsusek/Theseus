@@ -143,7 +143,7 @@ struct TranscriptBuilderTests {
       }
     }
 
-    #expect(details()[0] == [.diff([" keep", "-old", "+new", "+more"])])
+    #expect(details()[0] == [.diff(["@@ -1,2 +1,3 @@", " keep", "-old", "+new", "+more"])])
     #expect(details()[1] == [.diff(["+one", "+two"])])
     #expect(details()[2] == [.command("$ seq 40"), .output((1...16).map { "line \($0)" }.joined(separator: "\n")), .more(id: "t3/more", hidden: 24)])
 
