@@ -235,7 +235,7 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
 
     switch column {
     case .title:
-      (view as? NameCellView)?.show(title: session.rowTitle, status: session.rowStatus, isDimmed: session.isArchived)
+      (view as? NameCellView)?.show(title: session.rowTitle, status: session.rowStatus, isUnread: session.isUnread, isDimmed: session.isArchived)
     case .status:
       (view as? ActivityCellView)?.show(activity(of: session), request: session.request)
     case .tasks:

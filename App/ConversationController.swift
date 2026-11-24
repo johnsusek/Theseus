@@ -183,6 +183,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     let isWaiting = !requests.isEmpty || live?.state == .requiresAction || owner?.status == "waiting"
 
     retitle()
+    markReadIfShown()
 
     if isWaiting {
       tabStatus.status = .needsInput
@@ -531,6 +532,18 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
   func windowDidBecomeMain(_ notification: Notification) {
     windowActiveChanged()
+    markReadIfShown()
+  }
+
+  /// A conversation in the main window counts as read, also when a turn ends while it is there.
+  private func markReadIfShown() {
+    guard let session, window?.isMainWindow == true, session.isUnread else { return }
+
+    do {
+      try app.workspace.markRead(session)
+    } catch {
+      report(error, as: "The Conversation Could Not Be Marked Read")
+    }
   }
 
   func windowDidResignMain(_ notification: Notification) {

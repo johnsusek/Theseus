@@ -78,8 +78,8 @@ final class NameCellView: NSTableCellView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("NameCellView is built in code") }
 
-  /// A session's row passes its status; a group's passes its symbol.
-  func show(title: String, status: RowStatus? = nil, symbol: String? = nil, isDimmed: Bool = false) {
+  /// A session's row passes its status; a group's passes its symbol. An unread session that is not waiting, failed or running shows a dot.
+  func show(title: String, status: RowStatus? = nil, symbol: String? = nil, isUnread: Bool = false, isDimmed: Bool = false) {
     textField?.stringValue = title
     textField?.textColor = isDimmed ? .secondaryLabelColor : .labelColor
     toolTip = title
@@ -101,8 +101,9 @@ final class NameCellView: NSTableCellView {
     case .failed:
       mark.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: RowStatus.failed.title)
       mark.contentTintColor = .systemRed
-    case .finished:
-      mark.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: RowStatus.finished.title)
+    case .finished where isUnread, .closed where isUnread:
+      mark.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "Unread")
+      mark.toolTip = "Unread"
       mark.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 7, weight: .regular)
       mark.contentTintColor = .controlAccentColor
     default:

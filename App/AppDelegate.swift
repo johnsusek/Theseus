@@ -27,10 +27,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     UNUserNotificationCenter.current().delegate = self
 
-    // Follows the sessions a terminal or another app has open.
+    // Follows the sessions a terminal or another app has open, and which ones the desktop app has shown.
     Task {
       while true {
         await workspace.readOwners()
+        await workspace.readDesktop()
         try? await Task.sleep(for: .seconds(1))
       }
     }
