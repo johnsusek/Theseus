@@ -63,10 +63,10 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.transcript.onDecision = { [unowned self] request, decision in session?.live?.respond(to: request, with: decision) }
     content.transcript.onLink = { [unowned self] link in openLink(link) }
     content.transcript.onReply = { [unowned self] text in send(text) }
-    content.status.agents.target = self
-    content.status.agents.action = #selector(showAgents(_:))
-    content.status.changes.target = self
-    content.status.changes.action = #selector(showChanges(_:))
+    content.prompt.agents.target = self
+    content.prompt.agents.action = #selector(showAgents(_:))
+    content.prompt.changes.target = self
+    content.prompt.changes.action = #selector(showChanges(_:))
     content.picks.menuItems = { [unowned self] button in
       let live = session?.live
 
@@ -233,23 +233,23 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     content.transcript.show(input, requests: requests, projectName: project.lastPathComponent)
-    showStatus(session, live)
+    showChips(session, live)
   }
 
-  /// Fills the status row and whichever of its popovers is open.
-  private func showStatus(_ session: Session, _ live: LiveSession?) {
+  /// Fills the prompt's agents badge and changes chip and whichever of their popovers is open.
+  private func showChips(_ session: Session, _ live: LiveSession?) {
     let transcript = session.transcript
-    var status = StatusRowState()
-    status.runningAgents = transcript.tasks.count { $0.kind == .agent && $0.status.isActive }
-    status.showsAgents = status.runningAgents > 0 || agentsPopover != nil
-    status.changedFiles = transcript.changedFiles.count
-    status.added = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.added }
-    status.removed = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.removed }
+    var chips = ChipCounts()
+    chips.runningAgents = transcript.tasks.count { $0.kind == .agent && $0.status.isActive }
+    chips.showsAgents = chips.runningAgents > 0 || agentsPopover != nil
+    chips.changedFiles = transcript.changedFiles.count
+    chips.added = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.added }
+    chips.removed = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.removed }
 
     agentList?.rows = agentRows(transcript)
     changeList?.rows = changeRows(transcript.changedFiles, base: session.workingDirectory)
 
-    content.status.state = status
+    content.prompt.chips = chips
     guard let live else { return }
 
     for issue in live.issues.dropFirst(loggedIssues) { log.error("\(issue)") }
@@ -363,17 +363,17 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   // MARK: Agents and changes
 
   @objc func showAgents(_ sender: Any?) {
-    guard agentsPopover == nil, !isClosingClick(on: content.status.agents) else { return }
+    guard agentsPopover == nil, !isClosingClick(on: content.prompt.agents) else { return }
 
     let list = AgentListController()
     list.onStop = { [unowned self] rows in stop(rows) }
-    present(list, under: content.status.agents, as: \.agentsPopover)
+    present(list, under: content.prompt.agents, as: \.agentsPopover)
   }
 
   @objc func showChanges(_ sender: Any?) {
-    guard changesPopover == nil, !isClosingClick(on: content.status.changes) else { return }
+    guard changesPopover == nil, !isClosingClick(on: content.prompt.changes) else { return }
 
-    present(ChangeListController(), under: content.status.changes, as: \.changesPopover)
+    present(ChangeListController(), under: content.prompt.changes, as: \.changesPopover)
   }
 
   /// A click on a chip whose popover is open closes the popover, as any click outside it does, and the chip's action follows.
@@ -384,7 +384,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     return event.eventNumber == closingClick.event
   }
 
-  /// Shows `list` in a popover under `chip`.
+  /// Shows `list` in a popover above `chip`.
   private func present(_ list: ListController, under chip: NSView, as slot: ReferenceWritableKeyPath<ConversationController, NSPopover?>) {
     let popover = NSPopover()
 
@@ -399,7 +399,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   }
 
   func popoverWillClose(_ notification: Notification) {
-    let chip = notification.object as? NSPopover === agentsPopover ? content.status.agents : content.status.changes
+    let chip = notification.object as? NSPopover === agentsPopover ? content.prompt.agents : content.prompt.changes
 
     closingClick = NSApp.currentEvent.flatMap { $0.type == .leftMouseDown ? (chip, $0.eventNumber) : nil }
   }
@@ -556,9 +556,8 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   }
 
   private func windowActiveChanged() {
-    content.prompt.updateButton()
+    content.prompt.windowActiveChanged()
     content.transcript.windowActiveChanged()
-    content.status.windowActiveChanged()
   }
 
   func windowDidMove(_ notification: Notification) {

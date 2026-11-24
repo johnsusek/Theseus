@@ -1,8 +1,11 @@
 import AppKit
 
-/// The prompt: a text view that grows from one line to eight, how full the context is, and the Send or Stop button, in a glass capsule.
+/// The prompt, in a glass capsule: a text view that grows from one line to eight, then the agents badge, the changes chip,
+/// how full the context is, and the Send or Stop button.
 final class PromptField: NSView, NSTextViewDelegate {
   let textView = PromptTextView(usingTextLayoutManager: true)
+  let agents = StatusChip()
+  let changes = StatusChip()
   var onSend: () -> Void = {}
   var onStop: () -> Void = {}
 
@@ -20,6 +23,12 @@ final class PromptField: NSView, NSTextViewDelegate {
 
       textView.isEditable = !isLocked
       updateButton()
+    }
+  }
+
+  var chips = ChipCounts() {
+    didSet {
+      if chips != oldValue { showChips() }
     }
   }
 
@@ -45,6 +54,7 @@ final class PromptField: NSView, NSTextViewDelegate {
   }
 
   private static let font = NSFont.systemFont(ofSize: 14)
+  private static let digits = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
   private static let lineHeight = ceil(font.ascender - font.descender + font.leading)
   private static let oneLineHeight = 30.0
   private static let padding = 6.0
@@ -97,9 +107,12 @@ final class PromptField: NSView, NSTextViewDelegate {
     meter.isHidden = true
     meter.setAccessibilityLabel("Context")
 
-    // A stack lets the text take the meter's room while it is hidden.
-    let trailing = NSStackView(views: [meter, button])
-    trailing.spacing = 8
+    agents.setAccessibilityLabel("Agents")
+    changes.setAccessibilityLabel("Changes")
+
+    // A stack lets the text take the room of whatever is hidden.
+    let trailing = NSStackView(views: [agents, changes, meter, button])
+    trailing.spacing = 10
     trailing.alignment = .centerY
 
     glass.cornerRadius = 21
@@ -131,7 +144,7 @@ final class PromptField: NSView, NSTextViewDelegate {
     // The text rewraps when the field's width changes, which changes the height it needs.
     NotificationCenter.default.addObserver(self, selector: #selector(fitHeight), name: NSView.frameDidChangeNotification, object: textView)
     NotificationCenter.default.addObserver(self, selector: #selector(clipChanged), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
-    updateButton()
+    windowActiveChanged()
   }
 
   @available(*, unavailable)
@@ -147,8 +160,27 @@ final class PromptField: NSView, NSTextViewDelegate {
     updateButton()
   }
 
-  /// Send is accent colored only in the main window, like every other control.
-  func updateButton() {
+  /// Only the main window's Send button, badge and line counts have color.
+  func windowActiveChanged() {
+    updateButton()
+    showChips()
+  }
+
+  private func showChips() {
+    let isActive = window?.isMainWindow == true
+    agents.isHidden = !chips.showsAgents
+    agents.text = NSAttributedString(string: "\(chips.runningAgents)", attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .semibold), .foregroundColor: NSColor.white])
+    agents.fill = isActive ? .controlAccentColor : .systemGray
+    agents.toolTip = chips.agentsTooltip
+    agents.setAccessibilityValue(chips.agentsTooltip)
+
+    changes.isHidden = chips.changedFiles == 0
+    changes.text = lineDeltaText(added: chips.added, removed: chips.removed, font: Self.digits, isActive: isActive)
+    changes.toolTip = chips.changesTooltip
+    changes.setAccessibilityValue("\(chips.changesTooltip), \(chips.added) lines added, \(chips.removed) removed")
+  }
+
+  private func updateButton() {
     let label = stops ? "Stop Claude" : "Send"
     let symbol = stops ? "stop.circle.fill" : "arrow.up.circle.fill"
     var tint = NSColor.secondaryLabelColor

@@ -1,11 +1,10 @@
 import AppKit
 
-/// A conversation window's content: the transcript, the prompt field floating over its bottom edge,
-/// and the status row in a plain strip under both. A blank conversation shows its picks centered above the prompt.
+/// A conversation window's content: the transcript and the prompt field floating over its bottom edge.
+/// A blank conversation shows its picks centered above the prompt.
 final class ConversationView: NSView {
   let transcript = TranscriptView()
   let prompt = PromptField()
-  let status = StatusRowView()
   let picks = NewConversationView()
 
   init() {
@@ -15,7 +14,7 @@ final class ConversationView: NSView {
     let above = NSLayoutGuide()
     addLayoutGuide(above)
 
-    for view in [transcript, picks, prompt, status] {
+    for view in [transcript, picks, prompt] {
       view.translatesAutoresizingMaskIntoConstraints = false
       addSubview(view)
     }
@@ -24,16 +23,12 @@ final class ConversationView: NSView {
       widthAnchor.constraint(greaterThanOrEqualToConstant: 500),
       heightAnchor.constraint(greaterThanOrEqualToConstant: 220),
       transcript.topAnchor.constraint(equalTo: topAnchor),
-      transcript.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -8),
+      transcript.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
       transcript.leadingAnchor.constraint(equalTo: leadingAnchor),
       transcript.trailingAnchor.constraint(equalTo: trailingAnchor),
       prompt.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
       prompt.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
       prompt.bottomAnchor.constraint(equalTo: transcript.bottomAnchor),
-      status.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-      status.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-      status.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-      status.heightAnchor.constraint(equalToConstant: StatusChip.height),
       above.topAnchor.constraint(equalTo: topAnchor),
       above.bottomAnchor.constraint(equalTo: prompt.topAnchor),
       picks.centerXAnchor.constraint(equalTo: centerXAnchor),

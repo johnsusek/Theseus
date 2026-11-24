@@ -14,7 +14,7 @@ struct StatusModelTests {
   }
 
   @Test func tooltipsCountOneAndMany() {
-    var state = StatusRowState(runningAgents: 1, changedFiles: 1)
+    var state = ChipCounts(runningAgents: 1, changedFiles: 1)
 
     #expect(state.agentsTooltip == "1 Agent Running")
     #expect(state.changesTooltip == "1 Changed File")

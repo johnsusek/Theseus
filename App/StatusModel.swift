@@ -1,8 +1,8 @@
 import ClaudeEngine
 import Foundation
 
-/// What the status row under the prompt shows, as plain values.
-struct StatusRowState: Equatable {
+/// What the agents badge and the changes chip in the prompt show, as plain values.
+struct ChipCounts: Equatable {
   var runningAgents = 0
   /// The badge also stays while its popover is open, where it can read zero.
   var showsAgents = false
