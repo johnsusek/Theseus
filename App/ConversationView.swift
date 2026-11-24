@@ -1,17 +1,21 @@
 import AppKit
 
 /// A conversation window's content: the transcript, the prompt field floating over its bottom edge,
-/// and the status row in a plain strip under both.
+/// and the status row in a plain strip under both. A blank conversation shows its picks centered above the prompt.
 final class ConversationView: NSView {
   let transcript = TranscriptView()
   let prompt = PromptField()
   let status = StatusRowView()
+  let picks = NewConversationView()
 
   init() {
     super.init(frame: .zero)
     prompt.textView.finder = transcript.textView
 
-    for view in [transcript, prompt, status] {
+    let above = NSLayoutGuide()
+    addLayoutGuide(above)
+
+    for view in [transcript, picks, prompt, status] {
       view.translatesAutoresizingMaskIntoConstraints = false
       addSubview(view)
     }
@@ -29,7 +33,11 @@ final class ConversationView: NSView {
       status.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
       status.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
       status.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-      status.heightAnchor.constraint(equalToConstant: StatusChip.height)
+      status.heightAnchor.constraint(equalToConstant: StatusChip.height),
+      above.topAnchor.constraint(equalTo: topAnchor),
+      above.bottomAnchor.constraint(equalTo: prompt.topAnchor),
+      picks.centerXAnchor.constraint(equalTo: centerXAnchor),
+      picks.centerYAnchor.constraint(equalTo: above.centerYAnchor)
     ])
   }
 

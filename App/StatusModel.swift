@@ -9,21 +9,21 @@ struct StatusRowState: Equatable {
   var changedFiles = 0
   var added = 0
   var removed = 0
-  /// The model and mode menus appear once the process has answered `initialize`.
-  var hasSession = false
-  var model = ""
-  var effort = ""
-  var mode = ""
-  var contextUsed = 0
-  var contextMax = 0
 
   var agentsTooltip: String { runningAgents == 1 ? "1 Agent Running" : "\(runningAgents) Agents Running" }
   var changesTooltip: String { changedFiles == 1 ? "1 Changed File" : "\(changedFiles) Changed Files" }
-  var contextFraction: Double { contextMax > 0 ? min(Double(contextUsed) / Double(contextMax), 1) : 0 }
+}
+
+/// How full the context is, shown in the prompt next to Send.
+struct ContextMeter: Equatable {
+  var used = 0
+  var max = 0
+
+  var fraction: Double { max > 0 ? min(Double(used) / Double(max), 1) : 0 }
 
   /// "Context: 54.8k of 200k tokens (27%)"
-  func contextTooltip(locale: Locale = .current) -> String {
-    "Context: \(shortCount(contextUsed, locale: locale)) of \(shortCount(contextMax, locale: locale)) tokens (\(Int((contextFraction * 100).rounded()))%)"
+  func tooltip(locale: Locale = .current) -> String {
+    "Context: \(shortCount(used, locale: locale)) of \(shortCount(max, locale: locale)) tokens (\(Int((fraction * 100).rounded()))%)"
   }
 }
 

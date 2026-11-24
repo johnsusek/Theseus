@@ -26,13 +26,13 @@ struct StatusModelTests {
   }
 
   @Test func contextTooltipShortensCounts() {
-    let state = StatusRowState(contextUsed: 54_800, contextMax: 200_000)
+    let meter = ContextMeter(used: 54_800, max: 200_000)
 
-    #expect(state.contextTooltip(locale: english) == "Context: 54.8k of 200k tokens (27%)")
-    #expect(state.contextFraction == 0.274)
-    #expect(StatusRowState(contextUsed: 950, contextMax: 1_000_000).contextTooltip(locale: english) == "Context: 950 of 1M tokens (0%)")
-    #expect(StatusRowState(contextUsed: 300, contextMax: 200).contextFraction == 1)
-    #expect(StatusRowState().contextFraction == 0)
+    #expect(meter.tooltip(locale: english) == "Context: 54.8k of 200k tokens (27%)")
+    #expect(meter.fraction == 0.274)
+    #expect(ContextMeter(used: 950, max: 1_000_000).tooltip(locale: english) == "Context: 950 of 1M tokens (0%)")
+    #expect(ContextMeter(used: 300, max: 200).fraction == 1)
+    #expect(ContextMeter().fraction == 0)
   }
 
   @Test func timesReadAsSpans() {

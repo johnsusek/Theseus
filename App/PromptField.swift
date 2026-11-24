@@ -1,6 +1,6 @@
 import AppKit
 
-/// The prompt: a text view that grows from one line to eight, and the Send or Stop button, in a glass capsule.
+/// The prompt: a text view that grows from one line to eight, how full the context is, and the Send or Stop button, in a glass capsule.
 final class PromptField: NSView, NSTextViewDelegate {
   let textView = PromptTextView(usingTextLayoutManager: true)
   var onSend: () -> Void = {}
@@ -23,6 +23,18 @@ final class PromptField: NSView, NSTextViewDelegate {
     }
   }
 
+  /// Hidden until the session has reported its context.
+  var context = ContextMeter() {
+    didSet {
+      guard context != oldValue else { return }
+
+      meter.isHidden = context.max == 0
+      meter.doubleValue = context.fraction
+      meter.toolTip = context.tooltip()
+      meter.setAccessibilityValue(meter.toolTip)
+    }
+  }
+
   var draft: String {
     get { textView.string }
     set {
@@ -38,6 +50,7 @@ final class PromptField: NSView, NSTextViewDelegate {
   private static let padding = 6.0
   private let scrollView = NSScrollView()
   private let button = NSButton()
+  private let meter = NSProgressIndicator()
   private lazy var height = heightAnchor.constraint(equalToConstant: Self.oneLineHeight + Self.padding * 2)
   private var isDraftEmpty: Bool { textView.string.allSatisfy(\.isWhitespace) }
   private var stops: Bool { isBusy && isDraftEmpty }
@@ -76,12 +89,25 @@ final class PromptField: NSView, NSTextViewDelegate {
     button.target = self
     button.action = #selector(pressButton)
 
+    meter.style = .spinning
+    meter.controlSize = .small
+    meter.isIndeterminate = false
+    meter.minValue = 0
+    meter.maxValue = 1
+    meter.isHidden = true
+    meter.setAccessibilityLabel("Context")
+
+    // A stack lets the text take the meter's room while it is hidden.
+    let trailing = NSStackView(views: [meter, button])
+    trailing.spacing = 8
+    trailing.alignment = .centerY
+
     glass.cornerRadius = 21
     glass.contentView = content
     glass.translatesAutoresizingMaskIntoConstraints = false
     addSubview(glass)
 
-    for view in [scrollView, button] {
+    for view in [scrollView, trailing] {
       view.translatesAutoresizingMaskIntoConstraints = false
       content.addSubview(view)
     }
@@ -95,9 +121,9 @@ final class PromptField: NSView, NSTextViewDelegate {
       scrollView.topAnchor.constraint(equalTo: content.topAnchor, constant: Self.padding),
       scrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -Self.padding),
       scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
-      scrollView.trailingAnchor.constraint(equalTo: button.leadingAnchor, constant: -8),
-      button.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -Self.padding),
-      button.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -Self.padding),
+      scrollView.trailingAnchor.constraint(equalTo: trailing.leadingAnchor, constant: -8),
+      trailing.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -Self.padding),
+      trailing.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -Self.padding),
       button.widthAnchor.constraint(equalToConstant: Self.oneLineHeight),
       button.heightAnchor.constraint(equalToConstant: Self.oneLineHeight)
     ])

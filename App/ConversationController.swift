@@ -67,7 +67,15 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.status.agents.action = #selector(showAgents(_:))
     content.status.changes.target = self
     content.status.changes.action = #selector(showChanges(_:))
-    content.status.menuItems = { [unowned self] button in button === content.status.model ? menuItems(.model, labeled: true) + menuItems(.effort, labeled: true) + [.separator(), pickItem("Fast Mode", #selector(toggleFastMode(_:)), nil)] : menuItems(.mode) }
+    content.picks.menuItems = { [unowned self] button in
+      let live = session?.live
+
+      if button === content.picks.model { return (menuItems(.model), live?.modelInfo?.value) }
+
+      if button === content.picks.effort { return (menuItems(.effort), live?.effort) }
+
+      return (menuItems(.mode), live?.permissionMode?.rawValue)
+    }
 
     if let existing {
       attach(existing)
@@ -199,10 +207,19 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.prompt.isLocked = owner != nil
     content.transcript.canReply = owner == nil
 
+    let isBlank = owner == nil && session.transcript.turns.isEmpty && sent.isEmpty
+
     if let owner {
       content.prompt.textView.placeholder = "Running in " + ownerName(entrypoint: owner.entrypoint)
     } else {
-      content.prompt.textView.placeholder = session.transcript.turns.isEmpty && sent.isEmpty ? "Describe a task or ask a question" : "Reply"
+      content.prompt.textView.placeholder = isBlank ? "Describe a task or ask a question" : "Reply"
+    }
+
+    content.picks.isHidden = !isBlank || live == nil
+
+    if let live {
+      content.picks.show(model: modelName(live.modelInfo, id: live.model, among: live.initializeInfo?.models ?? []), effort: live.effort.map(effortName) ?? "", mode: live.permissionMode.map(modeName) ?? "Unknown Mode")
+      content.prompt.context = ContextMeter(used: live.contextUsage?.totalTokens ?? 0, max: live.contextUsage?.maxTokens ?? 0)
     }
 
     let pending = requests.map { PendingRequest(requestId: $0.requestId, toolUseId: $0.toolUseId) }
@@ -232,18 +249,12 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     agentList?.rows = agentRows(transcript)
     changeList?.rows = changeRows(transcript.changedFiles, base: session.workingDirectory)
 
-    guard let live else { return content.status.state = status }
+    content.status.state = status
+    guard let live else { return }
 
     for issue in live.issues.dropFirst(loggedIssues) { log.error("\(issue)") }
 
     loggedIssues = live.issues.count
-    status.hasSession = true
-    status.model = modelName(live.modelInfo, id: live.model, among: live.initializeInfo?.models ?? [])
-    status.effort = live.effort.map(effortName) ?? ""
-    status.mode = live.permissionMode.map(modeName) ?? "Unknown Mode"
-    status.contextUsed = live.contextUsage?.totalTokens ?? 0
-    status.contextMax = live.contextUsage?.maxTokens ?? 0
-    content.status.state = status
   }
 
   /// Sends the draft, waiting for the process if it is still starting and resuming the session if its process has exited.
@@ -414,11 +425,11 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
   // MARK: Model, effort and permission mode
 
-  /// The items of a session menu, for the status row's menus and the menu bar's. `validateMenuItem` checks the current one.
-  func menuItems(_ kind: SessionMenu, labeled: Bool = false) -> [NSMenuItem] {
+  /// The items of a session menu, for a blank conversation's pickers and the menu bar's. `validateMenuItem` checks the current one.
+  func menuItems(_ kind: SessionMenu) -> [NSMenuItem] {
     guard let live = session?.live else { return [] }
 
-    var items: [NSMenuItem] = []
+    let items: [NSMenuItem]
 
     switch kind {
     case .model:
@@ -435,8 +446,6 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
       items = modes.map { pickItem(modeName($0), #selector(pickPermissionMode(_:)), $0.rawValue) }
     }
-
-    if labeled, !items.isEmpty { items.insert(.sectionHeader(title: kind == .model ? "Model" : "Effort"), at: 0) }
 
     return items
   }
