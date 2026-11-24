@@ -61,8 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     return true
   }
 
-  /// A click on the Dock icon. AppKit's own handling does not count panels as visible windows, and every conversation is one,
-  /// so it would open another conversation on each click.
+  /// A click on the Dock icon: brings back a minimized conversation, or opens one when no window is showing.
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
     let windows = conversations.compactMap(\.window)
 

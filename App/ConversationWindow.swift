@@ -1,13 +1,6 @@
 import AppKit
 
-/// A utility panel is the one AppKit window with the small title bar. Unlike a stock panel it can be the main window,
-/// so it gets the active look and its own Window menu entry.
-final class ConversationPanel: NSPanel {
-  override var canBecomeMain: Bool { true }
-
-  /// A panel with a close button closes on Esc and on Command-Period; a conversation should not.
-  override func cancelOperation(_ sender: Any?) {}
-
+final class ConversationWindow: NSWindow {
   /// The tab bar's + button.
   override func newWindowForTab(_ sender: Any?) {
     (windowController as? ConversationController)?.newConversation(sender)

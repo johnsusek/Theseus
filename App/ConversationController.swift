@@ -2,7 +2,7 @@ import AppKit
 import ClaudeEngine
 import ClaudeWorkspace
 
-/// One conversation, in a panel that is a tab of its project's window.
+/// One conversation, in a window that is a tab of its project's window.
 final class ConversationController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSPopoverDelegate {
   private let project: URL
   private unowned let app: AppDelegate
@@ -42,24 +42,20 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   init(app: AppDelegate, project: URL, session existing: Session? = nil) {
     self.app = app
     self.project = project
-    let panel = ConversationPanel(contentRect: NSRect(x: 0, y: 0, width: 720, height: 520), styleMask: [.titled, .closable, .miniaturizable, .resizable, .utilityWindow], backing: .buffered, defer: false)
-    super.init(window: panel)
+    let window = ConversationWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 520), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+    super.init(window: window)
 
-    panel.titlebarAppearsTransparent = true
-    panel.isFloatingPanel = false
-    panel.hidesOnDeactivate = false
-    panel.becomesKeyOnlyIfNeeded = false
-    panel.isReleasedWhenClosed = false
-    panel.isExcludedFromWindowsMenu = false
+    window.titlebarAppearsTransparent = true
+    window.isReleasedWhenClosed = false
     // With nothing to restore, a relaunch always gets its untitled-file request.
-    panel.isRestorable = false
-    panel.collectionBehavior.formUnion([.fullScreenNone, .managed, .participatesInCycle])
-    panel.tabbingIdentifier = project.path
-    panel.tab.accessoryView = tabStatus
-    panel.representedURL = project
-    panel.contentView = content
-    panel.initialFirstResponder = content.prompt.textView
-    panel.delegate = self
+    window.isRestorable = false
+    window.collectionBehavior.formUnion([.fullScreenNone, .managed, .participatesInCycle])
+    window.tabbingIdentifier = project.path
+    window.tab.accessoryView = tabStatus
+    window.representedURL = project
+    window.contentView = content
+    window.initialFirstResponder = content.prompt.textView
+    window.delegate = self
 
     content.prompt.textView.placeholder = "Describe a task or ask a question"
     content.prompt.onSend = { [unowned self] in send() }
@@ -87,14 +83,14 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   func open() {
     guard let window else { return }
 
-    let others = NSApp.windows.filter { $0 !== window && $0 is ConversationPanel && $0.isVisible && $0.tabbingIdentifier == window.tabbingIdentifier }
+    let others = NSApp.windows.filter { $0 !== window && $0 is ConversationWindow && $0.isVisible && $0.tabbingIdentifier == window.tabbingIdentifier }
 
     retitle()
 
     if let target = others.first(where: \.isKeyWindow) ?? others.first {
       target.addTabbedWindow(window, ordered: .above)
     } else if !window.setFrameUsingName(frameName) {
-      if let key = NSApp.keyWindow as? ConversationPanel {
+      if let key = NSApp.keyWindow as? ConversationWindow {
         window.setFrameTopLeftPoint(NSPoint(x: key.frame.minX + 24, y: key.frame.maxY - 24))
       } else {
         window.center()
