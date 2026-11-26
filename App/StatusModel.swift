@@ -119,14 +119,22 @@ func changeRows(_ files: [ChangedFile], base: URL) -> [ChangeRow] {
   }
 }
 
-/// What the running turn is doing: waiting on a permission request, else the CLI's own summary, else the running tool call, else "Thinking".
+/// What the running turn is doing: waiting on a permission request, else the CLI's own summary, else the running tool call,
+/// else the agents it waits for, else "Thinking". A session whose reply has ended stays busy while its background agents run.
 func activityLine(summary: String?, isWaiting: Bool, transcript: Transcript) -> String {
   if isWaiting { return "Waiting for approval" }
 
   if let summary, !summary.isEmpty { return summary }
 
   let running = transcript.turns.last?.toolCallIds.reversed().lazy.compactMap { transcript.toolCall($0) }.first { $0.status == .running }
-  return running.map { toolActivity($0.name, input: $0.input) } ?? "Thinking"
+
+  if let running { return toolActivity(running.name, input: running.input) }
+
+  let agents = transcript.tasks.count { $0.kind == .agent && $0.status.isActive }
+
+  if agents > 0 { return agents == 1 ? "Waiting for an agent" : "Waiting for \(agents) agents" }
+
+  return "Thinking"
 }
 
 /// The app another process that has a session open runs in, from the CLI's entrypoint.

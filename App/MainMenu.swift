@@ -108,6 +108,7 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
       item("Show Agents", #selector(ConversationController.showAgents(_:)), "a", [.command, .control]),
       item("Show Changes", #selector(ConversationController.showChanges(_:)), "c", [.command, .control]),
       item("Show Verbose Transcript", #selector(ConversationController.toggleVerboseTranscript(_:))),
+      item("Show History", #selector(ConversationController.toggleHistory(_:))),
       .separator(),
       item("Show Archived Sessions", #selector(ProjectsWindowController.toggleArchivedSessions(_:))),
       menu("Filter", [item("All Sessions", #selector(ProjectsWindowController.filterSessions(_:)), tag: -1), .separator()]

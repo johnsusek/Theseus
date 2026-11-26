@@ -22,7 +22,7 @@ final class RequestDetailController: NSViewController {
 
   override func loadView() {
     if RequestKind(request) == .question {
-      let form = QuestionForm(request.questions) { [unowned self] answers in
+      let form = QuestionForm(request.questions, answersOnReturn: true) { [unowned self] answers in
         answer(answers.map { .answer($0, to: request) } ?? .deny(message: "The user declined to answer."))
       }
       form.widthAnchor.constraint(equalToConstant: Self.width).isActive = true
@@ -45,14 +45,25 @@ final class RequestDetailController: NSViewController {
 }
 
 /// AskUserQuestion's questions, each with its options as radio buttons, or checkboxes when several can be picked.
-/// Answer hands back every question's picks; Skip hands back nil.
-private final class QuestionForm: NSStackView {
+/// Answer hands back every question's picks; Skip hands back nil. In the transcript Answer has no key equivalent, since Return belongs to the prompt field.
+final class QuestionForm: NSStackView {
   private let questions: [UserQuestion]
   private var choices: [[NSButton]] = []
+  /// Each question's last choice, Other, and the field its answer is typed in.
+  private var others: [(button: NSButton, field: NSTextField)] = []
+  /// Whether each question takes several picks.
+  private var multiple: [Bool] = []
   private let send = NSButton(title: "Answer", target: nil, action: nil)
   private let decide: ([String: String]?) -> Void
+  /// Wrapping labels and how far each sits in from the form's padding.
+  private var wrapping: [(label: NSTextField, indent: CGFloat)] = []
 
-  init(_ questions: [UserQuestion], decide: @escaping ([String: String]?) -> Void) {
+  /// The width the form's text wraps to.
+  var width = RequestDetailController.width {
+    didSet { for item in wrapping { item.label.preferredMaxLayoutWidth = width - 32 - item.indent } }
+  }
+
+  init(_ questions: [UserQuestion], answersOnReturn: Bool, decide: @escaping ([String: String]?) -> Void) {
     self.questions = questions
     self.decide = decide
     super.init(frame: .zero)
@@ -69,7 +80,7 @@ private final class QuestionForm: NSStackView {
 
     send.target = self
     send.action = #selector(pressAnswer)
-    send.keyEquivalent = "\r"
+    send.keyEquivalent = answersOnReturn ? "\r" : ""
     skip.toolTip = "Decline to Answer"
     row.spacing = 8
     addArrangedSubview(row)
@@ -87,7 +98,8 @@ private final class QuestionForm: NSStackView {
 
     text.font = .systemFont(ofSize: 13, weight: .semibold)
     text.isSelectable = true
-    text.preferredMaxLayoutWidth = RequestDetailController.width - 32
+    text.preferredMaxLayoutWidth = width - 32
+    wrapping.append((text, 0))
     options.orientation = .vertical
     options.alignment = .leading
     options.spacing = 4
@@ -104,11 +116,26 @@ private final class QuestionForm: NSStackView {
       let detail = NSTextField(wrappingLabelWithString: description)
       detail.textColor = .secondaryLabelColor
       detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-      detail.preferredMaxLayoutWidth = RequestDetailController.width - 52
+      detail.preferredMaxLayoutWidth = width - 52
+      wrapping.append((detail, 20))
       options.addArrangedSubview(detail)
       options.setCustomSpacing(6, after: detail)
       detail.leadingAnchor.constraint(equalTo: options.leadingAnchor, constant: 20).isActive = true
     }
+
+    // Other takes an answer in the user's own words, as the CLI's own question form does. Typing in its field picks it.
+    let other = question.multiSelect ? NSButton(checkboxWithTitle: "Other:", target: self, action: #selector(picked)) : NSButton(radioButtonWithTitle: "Other:", target: self, action: #selector(picked))
+    let field = NSTextField(string: "")
+    field.placeholderString = "Type your own answer"
+    field.delegate = self
+    field.setAccessibilityLabel("Other Answer")
+    field.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
+    let otherRow = NSStackView(views: [other, field])
+    otherRow.spacing = 6
+    options.addArrangedSubview(otherRow)
+    buttons.append(other)
+    others.append((other, field))
+    multiple.append(question.multiSelect)
 
     choices.append(buttons)
 
@@ -130,8 +157,12 @@ private final class QuestionForm: NSStackView {
   private var answers: [String: String]? {
     var answers: [String: String] = [:]
 
-    for (question, buttons) in zip(questions, choices) {
-      let picked = buttons.filter { $0.state == .on }.map(\.title)
+    for ((question, buttons), other) in zip(zip(questions, choices), others) {
+      let typed = other.field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      // Other counts once something is typed in it.
+      if other.button.state == .on, typed.isEmpty { return nil }
+
+      let picked = buttons.filter { $0.state == .on }.map { $0 === other.button ? typed : $0.title }
       guard !picked.isEmpty else { return nil }
 
       answers[question.question] = picked.joined(separator: ", ")
@@ -144,17 +175,48 @@ private final class QuestionForm: NSStackView {
     send.isEnabled = answers != nil
   }
 
-  @objc private func picked() {
+  /// Other's radio button sits in a row of its own, outside the options' automatic group, so one choice turns off the rest here.
+  @objc private func picked(_ sender: NSButton) {
+    if sender.state == .on, let index = choices.firstIndex(where: { $0.contains(sender) }), !multiple[index] {
+      for button in choices[index] where button !== sender { button.state = .off }
+    }
+
+    if let other = others.first(where: { $0.button === sender }), sender.state == .on { window?.makeFirstResponder(other.field) }
+
     update()
   }
 
-  @objc private func pressAnswer() {
-    guard let answers else { return }
+  /// Answers with what is picked, when every question has an answer. Returns whether it did.
+  @discardableResult func submit() -> Bool {
+    guard let answers else { return false }
 
     decide(answers)
+    return true
+  }
+
+  func skip() {
+    decide(nil)
+  }
+
+  @objc private func pressAnswer() {
+    submit()
   }
 
   @objc private func pressSkip() {
     decide(nil)
+  }
+}
+
+extension QuestionForm: NSTextFieldDelegate {
+  /// Typing an answer picks Other.
+  func controlTextDidChange(_ note: Notification) {
+    guard let field = note.object as? NSTextField, let other = others.first(where: { $0.field === field }) else { return }
+
+    if !field.stringValue.isEmpty, other.button.state != .on {
+      other.button.state = .on
+      picked(other.button)
+    } else {
+      update()
+    }
   }
 }

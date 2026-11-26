@@ -6,6 +6,10 @@ final class PromptField: NSView, NSTextViewDelegate {
   let textView = PromptTextView(usingTextLayoutManager: true)
   let agents = StatusChip()
   let changes = StatusChip()
+  /// Once the conversation has started: its permission mode, with the model, effort and mode to pick from in its menu.
+  let settings = NSPopUpButton(frame: .zero, pullsDown: true)
+  /// The settings menu's items, asked for when it is about to open.
+  var settingsItems: () -> [NSMenuItem] = { [] }
   var onSend: () -> Void = {}
   var onStop: () -> Void = {}
 
@@ -110,8 +114,18 @@ final class PromptField: NSView, NSTextViewDelegate {
     agents.setAccessibilityLabel("Agents")
     changes.setAccessibilityLabel("Changes")
 
+    settings.isBordered = false
+    settings.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+    settings.contentTintColor = .secondaryLabelColor
+    settings.addItem(withTitle: "")
+    settings.isHidden = true
+    settings.setAccessibilityLabel("Model, Effort and Permission Mode")
+    (settings.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtBottom
+    settings.setContentCompressionResistancePriority(.required, for: .horizontal)
+    NotificationCenter.default.addObserver(self, selector: #selector(fillSettings), name: NSPopUpButton.willPopUpNotification, object: settings)
+
     // A stack lets the text take the room of whatever is hidden.
-    let trailing = NSStackView(views: [agents, changes, meter, button])
+    let trailing = NSStackView(views: [settings, agents, changes, meter, button])
     trailing.spacing = 10
     trailing.alignment = .centerY
 
@@ -164,6 +178,21 @@ final class PromptField: NSView, NSTextViewDelegate {
   func windowActiveChanged() {
     updateButton()
     showChips()
+  }
+
+  /// The settings menu's title is the permission mode; its tooltip names the model and effort too.
+  func showSettings(mode: String, detail: String) {
+    settings.menu?.items.first?.title = mode
+    settings.toolTip = detail
+    settings.setAccessibilityValue(detail)
+  }
+
+  @objc private func fillSettings() {
+    guard let menu = settings.menu else { return }
+
+    while menu.numberOfItems > 1 { menu.removeItem(at: 1) }
+
+    for item in settingsItems() { menu.addItem(item) }
   }
 
   private func showChips() {

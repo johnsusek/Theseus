@@ -11,7 +11,7 @@ enum HostTools {
     You are running inside Theseus, a native macOS app that shows this conversation as a styled transcript.
     - When you mention a file, write it as a markdown link whose target is the path relative to the working directory, with an optional :line suffix, for example [Markdown.swift](App/Markdown.swift:42). The user can click it to open the file.
     - Theseus has a preview window that renders files. When the user asks to see, show, open, view or read a file, call show_file with its path and do not paste the file's contents into your reply; a one-line pointer to the file is enough. Do the same for a file you wrote for the user to read, such as a report or a plan.
-    - End every turn in which you changed files, ran commands or did multi-step work with a call to wrap_up, then write your closing message after it. Theseus draws its recap under the turn, with the question and reply buttons when the user has a decision to make. Skip it for short answers and conversation.
+    - End every turn in which you changed files, ran commands or did multi-step work with a call to wrap_up, made as soon as the work is done and before you write any summary. Theseus draws its recap as a card under the turn, with the question and reply buttons when the user has a decision to make, so the recap is the turn's summary. Text written just before the call shows right above the card and repeats it, so write none. After the call, write a closing message only for what the recap leaves out, such as details or findings the user needs; if the recap says it all, end the turn without one. Skip wrap_up for short answers and conversation.
     - Call notify only when a task that ran for several minutes finishes or when you are blocked on the user's answer, since they may have switched to another app.
     """
 
@@ -108,7 +108,7 @@ enum HostTools {
         return "Permission mode set to \(modeName(mode))."
       },
       tool("wrap_up", "Puts a recap of this turn's work under the turn, with one question and reply buttons when the user has a decision to make.", ["recap": ["type": "string", "description": "Two or three sentences to the user: what is now true or changed, and what is not done or not verified."], "ask": ["type": "string", "description": "One short question the user must answer, if any."], "actions": ["type": "array", "items": ["type": "string"], "maxItems": 2, "description": "With ask: one to three word answers the user can click, your recommendation first."]], optional: ["ask", "actions"]) { _, _ in
-        "Shown. Now write your closing message."
+        "Shown. Add a closing message only for what the recap leaves out; otherwise end the turn."
       },
       tool("set_title", "Renames this conversation in Theseus's tabs and session lists.", ["title": ["type": "string"]]) { [weak app] call, session in
         let title = try call.string("title").trimmingCharacters(in: .whitespacesAndNewlines)

@@ -1,9 +1,10 @@
 import AppKit
 import ClaudeEngine
 import ClaudeWorkspace
+import Quartz
 
 /// One conversation, in a window that is a tab of its project's window.
-final class ConversationController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSPopoverDelegate {
+final class ConversationController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSPopoverDelegate, RowRequestActions {
   private let project: URL
   private unowned let app: AppDelegate
   private let content = ConversationView()
@@ -30,9 +31,16 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   /// How many of the session's issues are already in the log.
   private var loggedIssues = 0
   private var preview: PreviewWindowController?
+  private var linkPopover: NSPopover?
+  /// Counts the times the start page started watching the workspace, so only the newest pass runs.
+  private var startPageWatch = 0
+  /// The session id the window's restorable state holds.
+  private var encodedSessionId: String?
 
   private var frameName: String { "Project \(project.path)" }
-  private var isBusy: Bool { session?.live.map { $0.state != .idle } == true || session?.owner?.isBusy == true }
+  private var isBusy: Bool { session?.live.map { $0.state != .idle } == true || isOwnerBusy }
+  /// The other process reports busy while background agents run after its turn, so a turn its transcript shows ended counts as idle.
+  private var isOwnerBusy: Bool { session?.owner?.isBusy == true && session?.transcript.turns.last?.status == .running }
   private var agentList: AgentListController? { agentsPopover?.contentViewController as? AgentListController }
   private var changeList: ChangeListController? { changesPopover?.contentViewController as? ChangeListController }
 
@@ -47,8 +55,10 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
     window.titlebarAppearsTransparent = true
     window.isReleasedWhenClosed = false
-    // With nothing to restore, a relaunch always gets its untitled-file request.
-    window.isRestorable = false
+    // Quit and Keep Windows, or the system's setting to keep windows, brings the tab back with its conversation.
+    window.isRestorable = true
+    window.restorationClass = ConversationRestoration.self
+    window.identifier = NSUserInterfaceItemIdentifier("Conversation")
     window.collectionBehavior.formUnion([.fullScreenNone, .managed, .participatesInCycle])
     window.tabbingIdentifier = project.path
     window.tab.accessoryView = tabStatus
@@ -61,26 +71,30 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.prompt.onSend = { [unowned self] in send() }
     content.prompt.onStop = { [unowned self] in stopSession(nil) }
     content.transcript.onDecision = { [unowned self] request, decision in session?.live?.respond(to: request, with: decision) }
-    content.transcript.onLink = { [unowned self] link in openLink(link) }
+    content.transcript.onLink = { [unowned self] link, rect in openLink(link, at: rect) }
     content.transcript.onReply = { [unowned self] text in send(text) }
     content.prompt.agents.target = self
     content.prompt.agents.action = #selector(showAgents(_:))
     content.prompt.changes.target = self
     content.prompt.changes.action = #selector(showChanges(_:))
+    content.prompt.settingsItems = { [unowned self] in settingsMenuItems() }
     content.picks.menuItems = { [unowned self] button in
-      let live = session?.live
+      if button === content.picks.model { return menuItems(.model) + [.separator(), pickItem("Fast Mode", #selector(toggleFastMode(_:)), nil)] }
 
-      if button === content.picks.model { return (menuItems(.model), live?.modelInfo?.value) }
-
-      if button === content.picks.effort { return (menuItems(.effort), live?.effort) }
-
-      return (menuItems(.mode), live?.permissionMode?.rawValue)
+      return menuItems(button === content.picks.effort ? .effort : .mode)
     }
+
+    content.startPage.onOpen = { [unowned self] picked in openFromStartPage(picked) }
+    content.startPage.history.outline.onEscape = { [unowned self] in toggleHistory(nil) }
+    // The empty transcript would show its own scroller beside the start page's.
+    content.startPage.isHidden = existing != nil
+    content.transcript.isHidden = existing == nil
 
     if let existing {
       attach(existing)
     } else {
       start()
+      watchStartPage()
     }
   }
 
@@ -97,11 +111,26 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
     if let target = others.first(where: \.isKeyWindow) ?? others.first {
       target.addTabbedWindow(window, ordered: .above)
-    } else if !window.setFrameUsingName(frameName) {
-      if let key = NSApp.keyWindow as? ConversationWindow {
-        window.setFrameTopLeftPoint(NSPoint(x: key.frame.minX + 24, y: key.frame.maxY - 24))
-      } else {
-        window.center()
+    } else {
+      let restored = window.setFrameUsingName(frameName)
+      // The frontmost project window, whether or not the app is active: a folder opened from Finder arrives while it is not.
+      let front = NSApp.orderedWindows.first { $0 !== window && $0 is ConversationWindow && $0.isVisible }
+      let covers = NSApp.windows.contains { $0 !== window && $0 is ConversationWindow && $0.isVisible && $0.frame.origin == window.frame.origin }
+      let visible = (front?.screen ?? window.screen ?? NSScreen.main)?.visibleFrame
+      var frame = window.frame
+
+      // A new project's window, or one whose saved place another window now holds, steps down and right from the front one,
+      // back to the screen's top left when that would leave the screen. With no window to step from, it is centered.
+      // These set the frame outright: `center()` and `setFrameTopLeftPoint` leave a window this early where it is.
+      if let front, !restored || covers {
+        frame.origin = NSPoint(x: front.frame.minX + 24, y: front.frame.maxY - 24 - frame.height)
+
+        if let visible, frame.maxX > visible.maxX || frame.minY < visible.minY { frame.origin = NSPoint(x: visible.minX + 24, y: visible.maxY - 24 - frame.height) }
+
+        window.setFrame(frame, display: false)
+      } else if !restored, let visible {
+        frame.origin = NSPoint(x: visible.midX - frame.width / 2, y: visible.minY + (visible.height - frame.height) * 2 / 3)
+        window.setFrame(frame, display: false)
       }
     }
 
@@ -189,9 +218,17 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     retitle()
     markReadIfShown()
 
+    // A conversation is worth restoring by its id once it has a turn; before that a relaunch gives a blank one.
+    let restorableId = session.transcript.turns.isEmpty ? nil : session.id
+
+    if restorableId != encodedSessionId {
+      encodedSessionId = restorableId
+      window?.invalidateRestorableState()
+    }
+
     if isWaiting {
       tabStatus.status = .needsInput
-    } else if live?.state == .running || owner?.isBusy == true {
+    } else if live?.state == .running || isOwnerBusy {
       tabStatus.status = .running
     } else {
       tabStatus.status = .idle
@@ -212,13 +249,26 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     if let owner {
       content.prompt.textView.placeholder = "Running in " + ownerName(entrypoint: owner.entrypoint)
     } else {
-      content.prompt.textView.placeholder = isBlank ? "Describe a task or ask a question" : "Reply"
+      let asks = requests.contains { RequestKind($0) == .question }
+      content.prompt.textView.placeholder = isBlank ? "Describe a task or ask a question" : asks ? "Type your own answer, or pick one above" : "Reply"
+    }
+
+    // A conversation's first prompt replaces the start page for good.
+    if !isBlank {
+      content.startPage.isHidden = true
+      content.transcript.isHidden = false
     }
 
     content.picks.isHidden = !isBlank || live == nil
+    // Past the start page the picks move into the prompt, so the mode a conversation runs in always shows.
+    content.prompt.settings.isHidden = isBlank || live?.isRunning != true
 
     if let live {
-      content.picks.show(model: modelName(live.modelInfo, id: live.model, among: live.initializeInfo?.models ?? []), effort: live.effort.map(effortName) ?? "", mode: live.permissionMode.map(modeName) ?? "Unknown Mode")
+      let model = modelName(live.modelInfo, id: live.model, among: live.initializeInfo?.models ?? [])
+      let effort = live.effort.map(effortName) ?? ""
+      let mode = live.permissionMode.map(modeName) ?? "Unknown Mode"
+      content.picks.show(model: model, effort: effort, mode: mode)
+      content.prompt.showSettings(mode: mode, detail: [model, effort.isEmpty ? "" : effort + " effort", mode + " mode"].filter { !$0.isEmpty }.joined(separator: " \u{B7} "))
       content.prompt.context = ContextMeter(used: live.contextUsage?.totalTokens ?? 0, max: live.contextUsage?.maxTokens ?? 0)
     }
 
@@ -229,7 +279,8 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
     if let busySince {
       let turn = session.transcript.turns.last.flatMap { $0.status == .running ? $0 : nil }
-      input.activity = Activity(text: activityLine(summary: live?.activity, isWaiting: isWaiting, transcript: session.transcript), since: turn?.startedAt ?? busySince)
+      let text = requests.first.map(RequestKind.init) == .question ? "Waiting for an answer" : activityLine(summary: live?.activity, isWaiting: isWaiting, transcript: session.transcript)
+      input.activity = Activity(text: text, since: turn?.startedAt ?? busySince)
     }
 
     content.transcript.show(input, requests: requests, projectName: project.lastPathComponent)
@@ -259,11 +310,19 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
   /// Sends the draft, waiting for the process if it is still starting and resuming the session if its process has exited.
   /// The CLI queues a prompt sent mid-turn.
+  /// A reply typed while Claude waits on a question answers it in the user's own words, rather than queueing behind it.
   private func send() {
     let text = content.prompt.draft.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return }
 
     content.prompt.draft = ""
+
+    if let live = session?.live, let question = live.pendingPermissions.first(where: { RequestKind($0) == .question }) {
+      let questions = question.questions
+      let decision: PermissionDecision = questions.count == 1 ? .answer([questions[0].question: text], to: question) : .deny(message: "The user answered in their own words instead of picking options: \(text)")
+      return live.respond(to: question, with: decision)
+    }
+
     send(text)
   }
 
@@ -349,7 +408,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
   /// Session > Allow and Deny answer the oldest permission request, as its card's buttons would.
   @objc func allowRequest(_ sender: Any?) {
-    content.transcript.answerOldestRequest(allow: true)
+    if !content.transcript.answerOldestRequest(allow: true) { NSSound.beep() }
   }
 
   @objc func denyRequest(_ sender: Any?) {
@@ -358,6 +417,73 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
   @objc func toggleVerboseTranscript(_ sender: Any?) {
     content.transcript.isVerbose.toggle()
+  }
+
+  // MARK: Start page
+
+  /// Keeps the start page current while it shows. A pass that finds it hidden reads nothing, which ends the loop.
+  private func watchStartPage() {
+    startPageWatch += 1
+    keepCurrent(self) { [generation = startPageWatch] controller in
+      if controller.startPageWatch == generation { controller.refreshStartPage() }
+    }
+  }
+
+  /// Waiting sessions, then running ones, then unread ones, each newest first, and the rest as recent ones; or every session in the history.
+  private func refreshStartPage() {
+    let page = content.startPage
+    guard !page.isHidden else { return }
+
+    let sessions = app.workspace.projects.first { $0.path.standardizedFileURL.path == project.path }?.sessions ?? []
+
+    if page.showsHistory { return page.history.show(sessions) }
+
+    let others = sessions.filter { $0 !== session }.sorted { $0.lastActive > $1.lastActive }
+    let waiting = others.filter { $0.rowStatus == .waiting }
+    let running = others.filter { $0.rowStatus == .running }
+    let unread = others.filter { $0.isUnread && !$0.isArchived && $0.rowStatus != .waiting && $0.rowStatus != .running }
+    let listed = Set((waiting + running + unread).map(ObjectIdentifier.init))
+    let recent = others.filter { !listed.contains(ObjectIdentifier($0)) && ProjectsQuery().shows($0, now: .now) }
+
+    page.show(sessions: waiting + running + unread, recent: recent)
+  }
+
+  /// A session picked on the start page takes this tab's place, unless it is open in another tab or a draft is typed here.
+  private func openFromStartPage(_ picked: Session) {
+    let replaces = app.conversation(for: picked) == nil && content.prompt.draft.isEmpty
+
+    app.showConversation(picked)
+
+    if replaces { close() }
+  }
+
+  /// View > Show History, and the start page's See History and Hide History.
+  @objc func toggleHistory(_ sender: Any?) {
+    let page = content.startPage
+    page.showsHistory.toggle()
+    window?.makeFirstResponder(page.showsHistory ? page.history.outline : content.prompt.textView)
+    watchStartPage()
+  }
+
+  func allowRow(_ sender: NSControl) {
+    content.startPage.session(for: sender)?.answerPermission(allow: true)
+  }
+
+  func denyRow(_ sender: NSControl) {
+    content.startPage.session(for: sender)?.answerPermission(allow: false)
+  }
+
+  func answerRow(_ sender: NSPopUpButton) {
+    guard let label = sender.selectedItem?.representedObject as? String else { return }
+
+    content.startPage.session(for: sender)?.answerQuestion(label)
+  }
+
+  /// A plan or several questions read in full in their own conversation.
+  func reviewRow(_ sender: NSControl) {
+    guard let picked = content.startPage.session(for: sender) else { return }
+
+    openFromStartPage(picked)
   }
 
   // MARK: Agents and changes
@@ -450,6 +576,19 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     return items
   }
 
+  /// The prompt's settings menu: the permission modes, then the model and effort in submenus.
+  private func settingsMenuItems() -> [NSMenuItem] {
+    func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
+      let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+      item.submenu = NSMenu(title: title)
+      item.submenu?.items = items
+      return item
+    }
+
+    let efforts = menuItems(.effort)
+    return menuItems(.mode) + [.separator(), submenu("Model", menuItems(.model) + [.separator(), pickItem("Fast Mode", #selector(toggleFastMode(_:)), nil)])] + (efforts.isEmpty ? [] : [submenu("Effort", efforts)])
+  }
+
   /// An item that picks `value` in this conversation, whichever window is key when it is chosen.
   private func pickItem(_ title: String, _ action: Selector, _ value: String?) -> NSMenuItem {
     let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
@@ -473,7 +612,10 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   @objc func pickPermissionMode(_ sender: NSMenuItem) {
     guard let mode = (sender.representedObject as? String).map(PermissionMode.init(rawValue:)) else { return }
 
-    change("The Permission Mode Could Not Be Changed") { $0.permissionMode = mode } with: { try await $0.setPermissionMode(mode) }
+    // A mode picked for a new conversation is what the next one starts in; one picked partway through, say Plan for one question, is not.
+    let isSetup = !content.picks.isHidden
+
+    change("The Permission Mode Could Not Be Changed") { if isSetup { $0.permissionMode = mode } } with: { try await $0.setPermissionMode(mode) }
   }
 
   @objc func toggleFastMode(_ sender: Any?) {
@@ -524,7 +666,13 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     case #selector(stopSession(_:)):
       return isBusy
     case #selector(allowRequest(_:)), #selector(denyRequest(_:)):
-      return content.transcript.hasPendingRequest
+      let isQuestion = content.transcript.oldestRequestKind == .question
+      let isAllow = menuItem.action == #selector(allowRequest(_:))
+      menuItem.title = isQuestion ? (isAllow ? "Answer" : "Skip Question") : (isAllow ? "Allow" : "Deny")
+      return content.transcript.oldestRequestKind != nil
+    case #selector(toggleHistory(_:)):
+      menuItem.title = content.startPage.showsHistory ? "Hide History" : "Show History"
+      return !content.startPage.isHidden
     case #selector(toggleVerboseTranscript(_:)):
       menuItem.title = content.transcript.isVerbose ? "Show Normal Transcript" : "Show Verbose Transcript"
       return true
@@ -560,6 +708,12 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.transcript.windowActiveChanged()
   }
 
+  func window(_ window: NSWindow, willEncodeRestorableState state: NSCoder) {
+    state.encode(project.path as NSString, forKey: ConversationRestoration.projectKey)
+
+    if let encodedSessionId { state.encode(encodedSessionId as NSString, forKey: ConversationRestoration.sessionKey) }
+  }
+
   func windowDidMove(_ notification: Notification) {
     window?.saveFrame(usingName: frameName)
   }
@@ -569,20 +723,38 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   }
 
   /// A conversation that has run a turn keeps running without its tab. One that never sent a prompt is discarded.
-  /// A path link opens its file in the file's default app; web links open as usual.
-  private func openLink(_ link: Any) -> Bool {
+  /// A path link shows its file in a Quick Look popover pointing at the link, and a folder opens in Finder; web links open as usual.
+  private func openLink(_ link: Any, at rect: NSRect) -> Bool {
     guard let url = FilePaths.target(ofLink: link, in: session?.workingDirectory ?? project) else { return false }
 
-    if FileManager.default.fileExists(atPath: url.path) {
-      NSWorkspace.shared.open(url)
-    } else if let window {
+    var isFolder: ObjCBool = false
+
+    if !FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) {
+      guard let window else { return true }
       let alert = NSAlert()
       alert.messageText = "“\(url.lastPathComponent)” doesn’t exist."
       alert.informativeText = url.path
       alert.beginSheetModal(for: window)
+    } else if isFolder.boolValue {
+      NSWorkspace.shared.open(url)
+    } else {
+      quickLook(url, at: rect)
     }
 
     return true
+  }
+
+  private func quickLook(_ url: URL, at rect: NSRect) {
+    linkPopover?.close()
+    let view = QLPreviewView(frame: NSRect(x: 0, y: 0, width: 560, height: 420), style: .normal)!
+    view.previewItem = url as NSURL
+    let controller = NSViewController()
+    controller.view = view
+    let popover = NSPopover()
+    popover.behavior = .transient
+    popover.contentViewController = controller
+    popover.show(relativeTo: rect, of: content.transcript.textView, preferredEdge: .maxY)
+    linkPopover = popover
   }
 
     func showPreview(of url: URL) {
@@ -606,6 +778,25 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   }
 }
 
+/// Rebuilds a conversation tab from its restorable state: its project, and its session once it had a turn.
+/// AppKit puts the restored windows back in their frames and tab groups.
+final class ConversationRestoration: NSObject, NSWindowRestoration {
+  static let projectKey = "project"
+  static let sessionKey = "session"
+
+  static func restoreWindow(withIdentifier identifier: NSUserInterfaceItemIdentifier, state: NSCoder, completionHandler: @escaping (NSWindow?, (any Error)?) -> Void) {
+    let path = state.decodeObject(of: NSString.self, forKey: projectKey) as String?
+    let id = state.decodeObject(of: NSString.self, forKey: sessionKey) as String?
+    nonisolated(unsafe) let done = completionHandler
+
+    MainActor.assumeIsolated {
+      guard let app = NSApp.delegate as? AppDelegate, let path else { return done(nil, nil) }
+
+      app.restoreConversation(in: URL(filePath: path, directoryHint: .isDirectory), sessionId: id) { done($0, nil) }
+    }
+  }
+}
+
 extension SessionSettings {
   /// What a new conversation starts with: the model, effort, permission mode and fast mode last picked in any conversation.
   static var lastChosen: SessionSettings {
@@ -613,3 +804,4 @@ extension SessionSettings {
     set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "LastSessionSettings") }
   }
 }
+

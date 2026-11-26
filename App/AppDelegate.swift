@@ -77,13 +77,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     return false
   }
 
+  /// A folder opened from Finder or the Dock answers the Open panel the launch put up, so the panel goes.
   func application(_ application: NSApplication, open urls: [URL]) {
-    for url in urls where url.hasDirectoryPath { openConversation(in: url) }
+    let folders = urls.filter(\.hasDirectoryPath)
+    guard !folders.isEmpty else { return }
+
+    projectPanel?.cancel(nil)
+
+    for url in folders { openConversation(in: url) }
   }
 
-  /// Closes every `claude` process before the app exits, so none is orphaned.
+  /// Closes every `claude` process before the app exits, so none is orphaned. Quitting mid-turn stops that turn, so it asks first.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    let engines = workspace.projects.flatMap(\.sessions).compactMap(\.live).filter(\.isRunning).map(\.engine)
+    let running = workspace.projects.flatMap(\.sessions).compactMap(\.live).filter(\.isRunning)
+    let working = running.filter { $0.state != .idle }.count
+
+    if working > 0 {
+      let alert = NSAlert()
+      alert.messageText = working == 1 ? "A conversation is still running." : "\(working) conversations are still running."
+      alert.informativeText = "Quitting Theseus stops \(working == 1 ? "its turn" : "their turns") where \(working == 1 ? "it is" : "they are"). You can resume \(working == 1 ? "it" : "them") later."
+      alert.addButton(withTitle: "Quit")
+      alert.addButton(withTitle: "Cancel")
+
+      if alert.runModal() != .alertFirstButtonReturn { return .terminateCancel }
+    }
+
+    let engines = running.map(\.engine)
     guard !engines.isEmpty else { return .terminateNow }
 
     Task {
@@ -110,6 +129,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     controller.open()
     UserDefaults.standard.set(project.path, forKey: "LastProject")
     NSDocumentController.shared.noteNewRecentDocumentURL(project)
+  }
+
+  /// The scan restored conversations wait for, so they can find their sessions.
+  private lazy var firstScan = Task { [workspace] in try? await workspace.reload() }
+
+  /// A conversation tab coming back after a relaunch. A session that no longer exists comes back as a blank conversation,
+  /// and a project folder that no longer exists does not come back.
+  func restoreConversation(in folder: URL, sessionId: String?, done: @escaping (NSWindow?) -> Void) {
+    let project = folder.standardizedFileURL
+    var isFolder: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: project.path, isDirectory: &isFolder), isFolder.boolValue else { return done(nil) }
+
+    nonisolated(unsafe) let done = done
+
+    Task {
+      var session: Session?
+
+      if let sessionId {
+        await firstScan.value
+        session = workspace.session(sessionId)
+      }
+
+      let controller = ConversationController(app: self, project: project, session: session)
+      conversations.append(controller)
+      controller.retitle()
+      done(controller.window)
+    }
   }
 
   /// Brings the session's tab forward, or opens it as a new tab in its project's window.

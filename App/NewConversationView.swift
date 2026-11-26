@@ -1,63 +1,56 @@
 import AppKit
 
-/// A blank conversation's model, effort and permission mode, centered where the transcript will be.
+/// A blank conversation's model, effort and permission mode menus, in one row above the prompt.
 final class NewConversationView: NSView {
-  let model = NSPopUpButton()
-  let effort = NSPopUpButton()
-  let mode = NSPopUpButton()
-  /// A menu's items, built when it is about to open, and the value of the current one.
-  var menuItems: (NSPopUpButton) -> (items: [NSMenuItem], current: String?) = { _ in ([], nil) }
-  private lazy var grid = NSGridView(views: [("Model:", model), ("Effort:", effort), ("Mode:", mode)].map { [NSTextField(labelWithString: $0.0), $0.1] })
+  let model = NSPopUpButton(frame: .zero, pullsDown: true)
+  let effort = NSPopUpButton(frame: .zero, pullsDown: true)
+  let mode = NSPopUpButton(frame: .zero, pullsDown: true)
+  /// The items of a menu, asked for when it is about to open.
+  var menuItems: (NSPopUpButton) -> [NSMenuItem] = { _ in [] }
 
   init() {
     super.init(frame: .zero)
 
-    for (button, label) in [(model, "Model"), (effort, "Effort"), (mode, "Permission Mode")] {
-      button.setAccessibilityLabel(label)
-      button.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
-      NotificationCenter.default.addObserver(self, selector: #selector(fillMenu(_:)), name: NSPopUpButton.willPopUpNotification, object: button)
+    for (menu, label) in [(model, "Model"), (effort, "Effort"), (mode, "Permission Mode")] {
+      menu.isBordered = false
+      menu.font = .systemFont(ofSize: NSFont.systemFontSize)
+      menu.toolTip = label
+      menu.setAccessibilityLabel(label)
+      menu.addItem(withTitle: "")
+      (menu.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+      NotificationCenter.default.addObserver(self, selector: #selector(fillMenu(_:)), name: NSPopUpButton.willPopUpNotification, object: menu)
     }
 
-    grid.rowAlignment = .firstBaseline
-    grid.rowSpacing = 10
-    grid.columnSpacing = 8
-    grid.column(at: 0).xPlacement = .trailing
-    grid.column(at: 1).xPlacement = .fill
-    grid.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(grid)
+    let row = NSStackView(views: [model, effort, mode])
+    row.spacing = 12
+    row.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(row)
 
     NSLayoutConstraint.activate([
-      grid.topAnchor.constraint(equalTo: topAnchor),
-      grid.bottomAnchor.constraint(equalTo: bottomAnchor),
-      grid.leadingAnchor.constraint(equalTo: leadingAnchor),
-      grid.trailingAnchor.constraint(equalTo: trailingAnchor)
+      row.topAnchor.constraint(equalTo: topAnchor),
+      row.bottomAnchor.constraint(equalTo: bottomAnchor),
+      row.leadingAnchor.constraint(equalTo: leadingAnchor),
+      row.trailingAnchor.constraint(equalTo: trailingAnchor)
     ])
   }
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("NewConversationView is built in code") }
 
-  /// The titles of the current picks. A model without effort levels hides the effort row.
+  /// The titles of the current picks. A model without effort levels hides the effort menu.
   func show(model modelTitle: String, effort effortTitle: String, mode modeTitle: String) {
-    for (button, title) in [(model, modelTitle), (effort, effortTitle), (mode, modeTitle)] where button.titleOfSelectedItem != title {
-      button.removeAllItems()
-      button.addItem(withTitle: title)
-    }
-
-    grid.row(at: 1).isHidden = effortTitle.isEmpty
+    model.menu?.items.first?.title = modelTitle
+    effort.menu?.items.first?.title = effortTitle
+    effort.isHidden = effortTitle.isEmpty
+    mode.menu?.items.first?.title = modeTitle
   }
 
-  /// The menu holds only the current title until it opens, then every choice with the current one selected.
+  /// A pull-down's first item is its title. The rest are built when the menu opens, so they are current.
   @objc private func fillMenu(_ note: Notification) {
     guard let button = note.object as? NSPopUpButton, let menu = button.menu else { return }
 
-    let (items, current) = menuItems(button)
-    guard !items.isEmpty else { return }
+    while menu.numberOfItems > 1 { menu.removeItem(at: 1) }
 
-    menu.removeAllItems()
-
-    for item in items { menu.addItem(item) }
-
-    button.select(items.first { $0.representedObject as? String == current })
+    for item in menuItems(button) { menu.addItem(item) }
   }
 }
