@@ -2,24 +2,21 @@
 
 <h1 align="center">Theseus</h1>
 
-Theseus is a native Mac app for [Claude Code](https://code.claude.com). It runs the `claude` CLI you already have installed and logged in, one process per conversation, and draws the conversation in AppKit. It is an independent project, not made or endorsed by Anthropic.
-
-> [!NOTE]
-> Theseus has no login and never asks for an account, password or API key. If `claude` works in your terminal, Theseus works: it uses that CLI's login and plan, and makes no network requests of its own.
-
-The app talks to the CLI through [ClaudeEngine](https://github.com/johnsusek/ClaudeEngine), a Swift library for Claude Code's stream-json and control protocols.
+Theseus is the best native Mac app for [Claude Code](https://code.claude.com). If `claude` works in your terminal, Theseus works: it uses that CLI's login and plan.
 
 ![A conversation where Claude explains two failing tests, edits scaler.py and asks to run the tests again](docs/screenshots/conversation.png)
 
+## Design
+
+The official app is a great web app, but not a great Mac app. It's totally possible to create a great native Mac client that meets and exceeds the official app in functionality using the `claude` CLI as an engine.
+
 ## Features
 
-- Each conversation is a window, and windows group as tabs. The transcript is one TextKit 2 text view, so selection and Find (⌘F) cover the whole conversation.
-- Permission requests, questions, plans and the next-step box appear as cards inside the transcript, where you answer them.
-- The status row under the prompt switches model, effort and permission mode. It also shows how full the context is and opens lists of running agents and changed files.
-- Window > Projects (⇧⌘0) lists every session in `~/.claude/projects` by project, with a dot for unread ones. A session waiting on you gets Allow and Deny buttons in its row, so you can answer it without opening it.
-- A new tab opens on a start page with the project's recent sessions; the sidebar lists them with subsessions under their parent, and View > Sidebar Configuration sets what each row shows.
-- Code blocks are syntax-highlighted and have Copy, and shell blocks have Run, which opens the command in Terminal.
-- If a session is already running in the Claude desktop app or a terminal, Theseus follows it read-only instead of starting a second process on it.
+- Near parity with official app's transcript rendering
+- One window, one project - like XCode or VSCode.
+- Conversations in tabs, in addition to the sidebar.
+- Global projects window
+- New tab page & History akin to Safari
 
 ![The Projects window listing sessions in three projects, one waiting with Deny and Allow buttons in its row](docs/screenshots/projects.png)
 
