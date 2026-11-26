@@ -9,6 +9,8 @@ struct MarkdownStyle: Hashable {
   var right = 0.0
   /// The column's width. Tables wider than it wrap their cells.
   var width = CGFloat.infinity
+  /// The text ends inside a code fence that has not closed, as while a reply streams it.
+  var endsInOpenFence = false
 }
 
 /// Markdown as styled paragraphs: headings, lists, quotes, fenced code on a rounded background, tables as tab-stopped rows.
@@ -35,7 +37,7 @@ enum Markdown {
   /// Parses `source` in chunks and keeps every chunk but the last, so a reply that grows as it streams only parses its last chunk again.
   /// The last chunk is the one still growing; keeping each of its versions would hold a long code block once per delta.
   static func paragraphs(_ source: String, style: MarkdownStyle = MarkdownStyle()) -> [Paragraph] {
-    let chunks = chunks(of: source)
+    let (chunks, endsInOpenFence) = split(source)
     var result: [Paragraph] = []
 
     if cachedBytes > 4_000_000 {
@@ -44,8 +46,10 @@ enum Markdown {
     }
 
     for (index, text) in chunks.enumerated() {
-      let key = Chunk(text: text, style: style)
-      var parsed = cache[key] ?? parse(text, style: style)
+      var chunkStyle = style
+      chunkStyle.endsInOpenFence = endsInOpenFence && index == chunks.count - 1
+      let key = Chunk(text: text, style: chunkStyle)
+      var parsed = cache[key] ?? parse(text, style: chunkStyle)
 
       if index < chunks.count - 1, cache[key] == nil {
         cache[key] = parsed
@@ -70,7 +74,9 @@ enum Markdown {
   }
 
   /// Splits at blank lines that end a top-level block: outside a code fence, and before a line that is not indented.
-  static func chunks(of source: String) -> [String] {
+  static func chunks(of source: String) -> [String] { split(source).chunks }
+
+  private static func split(_ source: String) -> (chunks: [String], endsInOpenFence: Bool) {
     var chunks: [String] = []
     var current: [Substring] = []
     var blanks: [Substring] = []
@@ -105,8 +111,12 @@ enum Markdown {
 
     if !current.isEmpty { chunks.append(current.joined(separator: "\n")) }
 
-    return chunks
+    return (chunks, fence != nil)
   }
+
+  /// A code block still streaming past this many lines shows plain, without buttons, until its fence closes.
+  /// Each delta would otherwise highlight the whole block again, twice for light and dark, and keep a new set of buttons.
+  private static let plainGrowingLines = 100
 
   private static let blockSpacing = 12.0
   /// Extra room under a list.
@@ -207,7 +217,9 @@ enum Markdown {
 
       if code {
         let source = block.runs.map { String(parsed[$0.range].characters) }.joined()
-        paragraphs += codeLines(source.hasSuffix("\n") ? String(source.dropLast()) : source, language: language, left: left, right: style.right, before: before, color: style.color, quoteBars: quoteBars, width: style.width)
+        let code = source.hasSuffix("\n") ? String(source.dropLast()) : source
+        let isPlain = style.endsInOpenFence && code.utf8.count(where: { $0 == UInt8(ascii: "\n") }) >= plainGrowingLines
+        paragraphs += codeLines(code, language: isPlain ? nil : language, left: left, right: style.right, before: before, color: style.color, quoteBars: quoteBars, width: style.width, hasButtons: !isPlain)
         continue
       }
 
@@ -251,10 +263,10 @@ enum Markdown {
 
   /// With a column `width`, the block is only as wide as its widest line, and its first line ends in the code buttons.
   /// A `badge`, such as a command output's terminal symbol, takes the buttons' place, and its block spans the column.
-  static func codeLines(_ source: String, language: String? = nil, left: CGFloat, right: CGFloat, before: CGFloat, color: NSColor = .labelColor, quoteBars: [CGFloat] = [], width: CGFloat = .infinity, badge: NSAttributedString? = nil) -> [Paragraph] {
+  static func codeLines(_ source: String, language: String? = nil, left: CGFloat, right: CGFloat, before: CGFloat, color: NSColor = .labelColor, quoteBars: [CGFloat] = [], width: CGFloat = .infinity, badge: NSAttributedString? = nil, hasButtons: Bool = true) -> [Paragraph] {
     let lines = source.components(separatedBy: "\n")
     let colored = CodeHighlighter.lines(lines, language: language, font: TranscriptStyle.code, color: color)
-    let buttons = width.isFinite && badge == nil ? codeButtons?(source, language) : nil
+    let buttons = width.isFinite && badge == nil && hasButtons ? codeButtons?(source, language) : nil
     let trailing = buttons.map { NSAttributedString(attachment: $0.attachment) } ?? badge
     let gap = 16.0
     var widest = colored.map { ceil($0.size().width) }.max() ?? 0
