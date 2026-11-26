@@ -1007,12 +1007,18 @@ struct TranscriptBuilder {
     let result = call?.result.map { $0.text.trimmingCharacters(in: .newlines) } ?? ""
 
     if name == "Bash", let command = input["command"]?.string {
-      blocks.append(.command("$ " + command))
+      let shown = bounded("$ " + command)
+      blocks.append(.command(shown.text))
+      blocks += shown.trailer
     } else if toolPhrase(for: name).past.hasPrefix("Used ") {
       // A tool without a phrase of its own says nothing about its input in the row, so the detail shows it.
       let json = readableJSON(input)
 
-      if !json.isEmpty { blocks.append(.output(json)) }
+      if !json.isEmpty {
+        let shown = bounded(json)
+        blocks.append(.output(shown.text))
+        blocks += shown.trailer
+      }
     }
 
     if let task = context.agents[id] {
@@ -1038,6 +1044,14 @@ struct TranscriptBuilder {
     }
 
     return blocks
+  }
+
+  /// A tool's input in full, up to the most lines and line length an unfolded output shows, so a huge heredoc or argument cannot stall the render.
+  private func bounded(_ text: String) -> (text: String, trailer: [DetailBlock]) {
+    let lines = text.components(separatedBy: "\n")
+    let shown = lines.prefix(Self.mostLines).map { $0.count > 2000 ? String($0.prefix(2000)) + "\u{2026}" : $0 }
+    let trailer: [DetailBlock] = lines.count > Self.mostLines ? [.note("\((lines.count - Self.mostLines).formatted(.number.locale(locale))) more lines not shown")] : []
+    return (shown.joined(separator: "\n"), trailer)
   }
 
   /// The lines to show of a long output, and the lines under them that say what was left out.
