@@ -72,6 +72,8 @@ final class HistoryView: NSScrollView, NSOutlineViewDataSource, NSOutlineViewDel
   private var collapsed = Set<Date>()
   private var isReloading = false
   private var query = ProjectsQuery()
+  /// Menus being tracked, such as a row's Answer pull-down. Reloading under one would drop or misroute its pick.
+  private var openMenus = 0
 
   init() {
     super.init(frame: .zero)
@@ -99,6 +101,19 @@ final class HistoryView: NSScrollView, NSOutlineViewDataSource, NSOutlineViewDel
     drawsBackground = false
     hasVerticalScroller = true
     autohidesScrollers = true
+    NotificationCenter.default.addObserver(self, selector: #selector(menuOpened(_:)), name: NSMenu.didBeginTrackingNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(menuClosed(_:)), name: NSMenu.didEndTrackingNotification, object: nil)
+  }
+
+  @objc private func menuOpened(_ notification: Notification) {
+    openMenus += 1
+  }
+
+  /// Catches up on the reload a menu held back.
+  @objc private func menuClosed(_ notification: Notification) {
+    openMenus = max(openMenus - 1, 0)
+
+    if openMenus == 0 { show(all) }
   }
 
   @available(*, unavailable)
@@ -123,6 +138,9 @@ final class HistoryView: NSScrollView, NSOutlineViewDataSource, NSOutlineViewDel
     let unchanged = grouped.map(\.day) == days.map(\.day) && zip(grouped, days).allSatisfy { new, old in new.sessions.map(ObjectIdentifier.init) == old.sessions.map(ObjectIdentifier.init) }
 
     if unchanged, !reloads { return reconfigureVisible() }
+
+    // The rows stay put under an open menu; closing it calls `show` again.
+    if openMenus > 0 { return reconfigureVisible() }
 
     reloads = false
     let selected = outline.item(atRow: outline.selectedRow) as AnyObject?
