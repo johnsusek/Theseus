@@ -100,42 +100,26 @@ final class TextCellView: NSTableCellView {
   required init?(coder: NSCoder) { fatalError("TextCellView is built in code") }
 }
 
-/// A session's status as a mark: a spinner while running, a yellow dot while waiting, a cross after a failure, a dot while unread.
+/// A session's status as a mark: a green dot while running, a yellow dot while waiting, a cross after a failure, a dot while unread.
 /// A group passes a symbol instead. The mark has a fixed slot, so titles beside it line up.
 final class RowStatusMark: NSView {
   private let mark = NSImageView()
-  private let spinner = NSProgressIndicator()
-
-  private let spinnerSize: Double
   /// The one size of every dot and cross in a compact mark; a table row's marks keep their own sizes.
   private let dotSize: Double?
 
-  /// A compact mark has a smaller spinner and same-size dots, for a start page pill's corner.
+  /// A compact mark has same-size dots, for a start page pill's corner.
   init(compact: Bool = false) {
-    spinnerSize = compact ? 12 : 14
     dotSize = compact ? 9 : nil
     super.init(frame: .zero)
-    spinner.style = .spinning
-    spinner.controlSize = .small
-    spinner.isDisplayedWhenStopped = false
-    spinner.toolTip = RowStatus.running.title
-    spinner.setAccessibilityLabel(RowStatus.running.title)
     translatesAutoresizingMaskIntoConstraints = false
-
-    for view in [mark, spinner] {
-      view.translatesAutoresizingMaskIntoConstraints = false
-      addSubview(view)
-    }
+    mark.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(mark)
 
     NSLayoutConstraint.activate([
       widthAnchor.constraint(equalToConstant: 20),
       heightAnchor.constraint(equalToConstant: 16),
       mark.centerXAnchor.constraint(equalTo: centerXAnchor),
-      mark.centerYAnchor.constraint(equalTo: centerYAnchor),
-      spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
-      spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
-      spinner.widthAnchor.constraint(equalToConstant: spinnerSize),
-      spinner.heightAnchor.constraint(equalToConstant: spinnerSize)
+      mark.centerYAnchor.constraint(equalTo: centerYAnchor)
     ])
   }
 
@@ -144,21 +128,15 @@ final class RowStatusMark: NSView {
 
   /// An unread session that is not waiting, failed or running shows a dot.
   func show(status: RowStatus? = nil, symbol: String? = nil, isUnread: Bool = false) {
-    if status == .running {
-      spinner.startAnimation(nil)
-    } else {
-      spinner.stopAnimation(nil)
-    }
-
     mark.image = nil
     mark.toolTip = status?.title
     mark.symbolConfiguration = nil
 
     switch status {
-    case .waiting:
-      mark.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: RowStatus.waiting.title)
+    case .running, .waiting:
+      mark.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: status?.title)
       mark.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: dotSize ?? 9, weight: .regular)
-      mark.contentTintColor = .systemYellow
+      mark.contentTintColor = status == .running ? .systemGreen : .systemYellow
     case .failed:
       mark.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: RowStatus.failed.title)
       mark.symbolConfiguration = dotSize.map { NSImage.SymbolConfiguration(pointSize: $0, weight: .regular) }
