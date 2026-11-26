@@ -9,6 +9,8 @@ Theseus is a native Mac app for [Claude Code](https://code.claude.com). It runs 
 
 The app talks to the CLI through [ClaudeEngine](https://github.com/johnsusek/ClaudeEngine), a Swift library for Claude Code's stream-json and control protocols.
 
+![A conversation where Claude explains two failing tests, edits scaler.py and asks to run the tests again](docs/screenshots/conversation.png)
+
 ## Features
 
 - Each conversation is a window, and windows group as tabs. The transcript is one TextKit 2 text view, so selection and Find (⌘F) cover the whole conversation.
@@ -18,6 +20,10 @@ The app talks to the CLI through [ClaudeEngine](https://github.com/johnsusek/Cla
 - A new tab opens on a start page with the project's recent sessions; the sidebar lists them with subsessions under their parent, and View > Sidebar Configuration sets what each row shows.
 - Code blocks are syntax-highlighted and have Copy, and shell blocks have Run, which opens the command in Terminal.
 - If a session is already running in the Claude desktop app or a terminal, Theseus follows it read-only instead of starting a second process on it.
+
+![The Projects window listing sessions in three projects, one waiting with Deny and Allow buttons in its row](docs/screenshots/projects.png)
+
+![A new tab's start page with the project's sessions as cards, beside the session sidebar](docs/screenshots/start.png)
 
 ## Requirements
 
