@@ -4,16 +4,19 @@ import ClaudeWorkspace
 /// A session on the start page: a rounded button with its status mark, its title, what it is doing or asks under the title
 /// (else how its last turn closed), the controls that answer a request, and when it was last active.
 final class SessionPill: NSButton {
+  /// The least height; a two-line detail grows the pill, and the other pill in its row with it.
   static let height = 48.0
   let session: Session
   private let mark = RowStatusMark()
   private let titleLabel = cellLabel()
-  private let detail = cellLabel(.secondaryLabelColor)
+  private let detail = cellLabel(.labelColor.withAlphaComponent(0.65), truncation: .byWordWrapping)
   /// The Activity column's cell without its text: Deny and Allow, Answer, or Review.
   private let answers = ActivityCellView()
   private let date = cellLabel(.secondaryLabelColor)
-  private lazy var centered = titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
-  private lazy var raised = titleLabel.bottomAnchor.constraint(equalTo: centerYAnchor, constant: 1)
+  /// Holds the title and the detail under it, centered in the pill.
+  private let text = NSLayoutGuide()
+  private lazy var alone = titleLabel.bottomAnchor.constraint(equalTo: text.bottomAnchor)
+  private lazy var withDetail = detail.bottomAnchor.constraint(equalTo: text.bottomAnchor)
   private var isHovered = false {
     didSet { needsDisplay = true }
   }
@@ -29,25 +32,37 @@ final class SessionPill: NSButton {
     titleLabel.font = .systemFont(ofSize: 14)
     date.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     date.setContentCompressionResistancePriority(.required, for: .horizontal)
+    detail.font = .systemFont(ofSize: 12)
+    detail.maximumNumberOfLines = 2
+    detail.cell?.truncatesLastVisibleLine = true
+    detail.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
     answers.translatesAutoresizingMaskIntoConstraints = false
 
     for view in [mark, titleLabel, detail, answers, date] { addSubview(view) }
+
+    addLayoutGuide(text)
 
     addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
 
     // As narrow as its buttons allow, and nothing without a request.
     let narrow = answers.widthAnchor.constraint(equalToConstant: 0)
     narrow.priority = NSLayoutConstraint.Priority(200)
+    let least = heightAnchor.constraint(equalToConstant: Self.height)
+    least.priority = .defaultLow
 
     NSLayoutConstraint.activate([
-      heightAnchor.constraint(equalToConstant: Self.height),
+      heightAnchor.constraint(greaterThanOrEqualToConstant: Self.height),
+      heightAnchor.constraint(greaterThanOrEqualTo: text.heightAnchor, constant: 12),
+      least,
+      text.centerYAnchor.constraint(equalTo: centerYAnchor),
+      titleLabel.topAnchor.constraint(equalTo: text.topAnchor),
       mark.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
       mark.centerYAnchor.constraint(equalTo: centerYAnchor),
       titleLabel.leadingAnchor.constraint(equalTo: mark.trailingAnchor, constant: 6),
       titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: answers.leadingAnchor, constant: -8),
-      detail.topAnchor.constraint(equalTo: centerYAnchor, constant: 1),
+      detail.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 3),
       detail.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-      detail.trailingAnchor.constraint(lessThanOrEqualTo: answers.leadingAnchor, constant: -8),
+      detail.trailingAnchor.constraint(equalTo: answers.leadingAnchor, constant: -8),
       answers.topAnchor.constraint(equalTo: topAnchor),
       answers.bottomAnchor.constraint(equalTo: bottomAnchor),
       answers.trailingAnchor.constraint(equalTo: date.leadingAnchor, constant: -8),
@@ -79,8 +94,18 @@ final class SessionPill: NSButton {
     toolTip = activity.isEmpty ? session.rowTitle : session.rowTitle + "\n" + activity
     setAccessibilityLabel(session.rowTitle)
     answers.show("", request: session.request)
-    NSLayoutConstraint.deactivate([centered, raised])
-    (activity.isEmpty ? centered : raised).isActive = true
+    NSLayoutConstraint.deactivate([alone, withDetail])
+    (activity.isEmpty ? alone : withDetail).isActive = true
+  }
+
+  /// A wrapping label needs its width to know its height.
+  override func layout() {
+    super.layout()
+
+    guard detail.preferredMaxLayoutWidth != detail.frame.width else { return }
+
+    detail.preferredMaxLayoutWidth = detail.frame.width
+    super.layout()
   }
 
   /// A click anywhere is a click on the pill, except on the answer controls.
@@ -255,7 +280,7 @@ final class StartPageView: NSView {
     sequence(first: control, next: \.superview).lazy.compactMap { ($0 as? SessionPill)?.session }.first ?? history.session(for: control)
   }
 
-  /// Puts a pill for each session in `stack`, two to a row.
+  /// Puts a pill for each session in `stack`, two to a row, as tall as each other.
   private func fill(_ stack: NSStackView, with sessions: [Session]) {
     let made = sessions.map(SessionPill.init)
     pills += made
@@ -269,6 +294,9 @@ final class StartPageView: NSView {
       let row = NSStackView(views: [made[index], index + 1 < made.count ? made[index + 1] : NSView()])
       row.distribution = .fillEqually
       row.spacing = 10
+
+      if index + 1 < made.count { made[index].heightAnchor.constraint(equalTo: made[index + 1].heightAnchor).isActive = true }
+
       return row
     }
     stack.setViews(rows, in: .top)
