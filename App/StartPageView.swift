@@ -1,15 +1,11 @@
 import AppKit
 import ClaudeWorkspace
 
-/// Safari's start page colors in dark mode. Light mode keeps the system colors.
+/// Safari's start page pill fills in dark mode. Light mode keeps the system fills.
 extension NSColor {
   static let pillFill = startPage(dark: 0x656565, light: .tertiarySystemFill)
   static let pillHover = startPage(dark: 0x6f6f6f, light: .secondarySystemFill)
   static let pillPressed = startPage(dark: 0x7a7a7a, light: .systemFill)
-  static let pillTitle = startPage(dark: 0xefefef, light: .labelColor)
-  static let pillDetail = startPage(dark: 0xd8d8d8, light: .labelColor.withAlphaComponent(0.8))
-  static let startHeading = startPage(dark: 0xededed, light: .labelColor)
-  static let startLink = startPage(dark: 0x0091ff, light: .linkColor)
 
   private static func startPage(dark hex: Int, light: NSColor) -> NSColor {
     let dark = NSColor(srgbRed: CGFloat(hex >> 16 & 0xff) / 255, green: CGFloat(hex >> 8 & 0xff) / 255, blue: CGFloat(hex & 0xff) / 255, alpha: 1)
@@ -20,15 +16,15 @@ extension NSColor {
 /// A session on the start page: a rounded button with its status mark, its title, what it is doing or asks under the title
 /// (else how its last turn closed), the controls that answer a request, and when it was last active.
 final class SessionPill: NSButton {
-  /// The least height; a two-line detail grows the pill, and the other pill in its row with it.
+  /// The least height; a detail of several lines grows the pill, and the other pill in its row with it.
   static let height = 48.0
   let session: Session
   private let mark = RowStatusMark()
-  private let titleLabel = cellLabel(.pillTitle)
-  private let detail = cellLabel(.pillDetail, truncation: .byWordWrapping)
+  private let titleLabel = cellLabel()
+  private let detail = cellLabel(.labelColor.withAlphaComponent(0.8), truncation: .byWordWrapping)
   /// The Activity column's cell without its text: Deny and Allow, Answer, or Review.
   private let answers = ActivityCellView()
-  private let date = cellLabel(.pillDetail)
+  private let date = cellLabel(.secondaryLabelColor)
   /// Holds the title and the detail under it, centered in the pill.
   private let text = NSLayoutGuide()
   private lazy var alone = titleLabel.bottomAnchor.constraint(equalTo: text.bottomAnchor)
@@ -49,7 +45,7 @@ final class SessionPill: NSButton {
     date.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     date.setContentCompressionResistancePriority(.required, for: .horizontal)
     detail.font = .systemFont(ofSize: 11)
-    detail.maximumNumberOfLines = 2
+    detail.maximumNumberOfLines = 5
     detail.cell?.truncatesLastVisibleLine = true
     detail.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
     answers.translatesAutoresizingMaskIntoConstraints = false
@@ -315,7 +311,7 @@ final class StartPageView: NSView {
     grid.translatesAutoresizingMaskIntoConstraints = false
 
     showAll.isBordered = false
-    showAll.contentTintColor = .startLink
+    showAll.contentTintColor = .linkColor
     showAll.font = .systemFont(ofSize: 13)
     showAll.imagePosition = .imageTrailing
     showAll.target = self
@@ -404,7 +400,6 @@ final class StartPageView: NSView {
   private func headingRow(_ title: String, trailing: NSView) -> NSStackView {
     let heading = NSTextField(labelWithString: title)
     heading.font = .systemFont(ofSize: 22, weight: .bold)
-    heading.textColor = .startHeading
     let row = NSStackView()
     row.alignment = .centerY
     row.setViews([heading], in: .leading)
@@ -416,7 +411,7 @@ final class StartPageView: NSView {
   private func linkButton(_ title: String) -> NSButton {
     let button = NSButton(title: title, target: nil, action: #selector(ConversationController.toggleHistory(_:)))
     button.isBordered = false
-    button.contentTintColor = .startLink
+    button.contentTintColor = .linkColor
     button.font = .systemFont(ofSize: 13)
     return button
   }
