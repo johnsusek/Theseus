@@ -87,7 +87,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.startPage.onOpen = { [unowned self] picked in openFromStartPage(picked) }
     content.startPage.history.outline.onEscape = { [unowned self] in toggleHistory(nil) }
     // The empty transcript would show its own scroller beside the start page's.
-    content.startPage.isHidden = existing != nil
+    content.showsStartPage = existing == nil
     content.transcript.isHidden = existing == nil
 
     if let existing {
@@ -255,7 +255,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
     // A conversation's first prompt replaces the start page for good.
     if !isBlank {
-      content.startPage.isHidden = true
+      content.showsStartPage = false
       content.transcript.isHidden = false
     }
 
@@ -672,7 +672,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
       return content.transcript.oldestRequestKind != nil
     case #selector(toggleHistory(_:)):
       menuItem.title = content.startPage.showsHistory ? "Hide History" : "Show History"
-      return !content.startPage.isHidden
+      return content.showsStartPage
     case #selector(toggleVerboseTranscript(_:)):
       menuItem.title = content.transcript.isVerbose ? "Show Normal Transcript" : "Show Verbose Transcript"
       return true

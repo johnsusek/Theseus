@@ -8,6 +8,14 @@ final class HistoryOutlineView: NSOutlineView {
   var onEscape: () -> Void = {}
   private let titleInset = 28.0
 
+  /// Stripes every other row in a translucent tint, so the start page's blur shows through.
+  override func drawBackground(inClipRect clipRect: NSRect) {
+    let visible = rows(in: clipRect)
+    NSColor.labelColor.withAlphaComponent(0.05).setFill()
+
+    for row in visible.lowerBound..<visible.upperBound where row % 2 == 1 { rect(ofRow: row).fill() }
+  }
+
   override func frameOfOutlineCell(atRow row: Int) -> NSRect {
     var frame = super.frameOfOutlineCell(atRow: row)
     frame.origin.x = 8
@@ -79,7 +87,7 @@ final class HistoryView: NSScrollView, NSOutlineViewDataSource, NSOutlineViewDel
     outline.outlineTableColumn = outline.tableColumns.first
     outline.headerView = nil
     outline.style = .plain
-    outline.usesAlternatingRowBackgroundColors = true
+    outline.backgroundColor = .clear
     outline.rowHeight = 26
     outline.dataSource = self
     outline.delegate = self
