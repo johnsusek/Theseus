@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds Debug, replaces /Applications/Theseus.app, and relaunches it.
+# Builds Debug against the ClaudeEngine checkout beside this one, replaces /Applications/Theseus.app, and relaunches it.
 set -euo pipefail
 
 root="${0:A:h:h}"
@@ -10,9 +10,17 @@ installed="/Applications/Theseus.app"
 cd "$root"
 rm -rf "$app"
 xcodegen generate --quiet
-mkdir -p "$derived"
+mkdir -p "$derived" build/Dev.xcworkspace
+# A local package in the workspace takes the place of the GitHub one, so engine edits build without a push.
+cat >build/Dev.xcworkspace/contents.xcworkspacedata <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<Workspace version="1.0">
+  <FileRef location="group:../Theseus.xcodeproj"></FileRef>
+  <FileRef location="group:../../ClaudeEngine"></FileRef>
+</Workspace>
+XML
 # A failed build can leave a partial bundle behind, so gate on xcodebuild's status rather than the bundle existing.
-if ! xcodebuild -project Theseus.xcodeproj -scheme Theseus -configuration Debug -destination 'platform=macOS' -derivedDataPath "$derived" -allowProvisioningUpdates build >"$derived/build.log" 2>&1; then
+if ! xcodebuild -workspace build/Dev.xcworkspace -scheme Theseus -configuration Debug -destination 'platform=macOS' -derivedDataPath "$derived" -allowProvisioningUpdates build >"$derived/build.log" 2>&1; then
   grep -E " error:" "$derived/build.log" >&2 || true
   echo "build failed, see $derived/build.log" >&2
   exit 1

@@ -15,7 +15,8 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
 packages:
   ClaudeEngine:
-    path: ../ClaudeEngine
+    url: https://github.com/johnsusek/ClaudeEngine
+    branch: main
   Highlightr:
     url: https://github.com/raspu/Highlightr
     from: 2.2.0
