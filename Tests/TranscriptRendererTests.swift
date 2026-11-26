@@ -81,7 +81,7 @@ struct TranscriptRendererTests {
       return NSTextAttachment()
     }
 
-    let live = renderer.attributedString(for: TranscriptElement(id: "g", kind: .group(GroupRow(id: "g", summary: [SummaryPart(text: "Ran 2 commands")], added: 3, activity: Activity(text: "Building the app", since: .now)))))
+    let live = renderer.attributedString(for: TranscriptElement(id: "g", kind: .group(GroupRow(id: "g", summary: "Ran 2 commands", added: 3, activity: Activity(text: "Building the app", since: .now)))))
     let row = renderer.attributedString(for: TranscriptElement(id: "t1", kind: .tool(ToolRow(id: "t1", verb: "Read", target: "a.png", thumbnails: [Thumbnail(id: "t1/0", data: Data())]))))
 
     #expect(clocks == [false])

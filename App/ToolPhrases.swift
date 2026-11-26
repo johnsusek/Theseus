@@ -21,15 +21,18 @@ struct ToolPhrase: Equatable {
   }
 }
 
-private let editPhrase = ToolPhrase("Edited", "Editing", "Could not edit", "edited a file", "made %d edits")
+private let editPhrase = ToolPhrase("Edited", "Editing", "Could not edit", "edited a file", "edited %d files")
 private let searchPhrase = ToolPhrase("Searched for", "Searching for", "Could not search for", "ran a search", "ran %d searches")
-private let agentPhrase = ToolPhrase("Ran agent", "Running agent", "Could not run agent", "ran an agent", "ran %d agents")
-private let skillPhrase = ToolPhrase("Ran skill", "Running skill", "Could not run skill", "ran a skill", "ran skill %d times")
-private let readPhrase = ToolPhrase("Read", "Reading", "Could not read", "read a file", "read %d files")
+private let agentPhrase = ToolPhrase("Ran subagent", "Running subagent", "Could not run subagent", "ran a subagent", "ran %d subagents")
+private let finishedPhrase = ToolPhrase("Finished a background subagent", "Finishing a background subagent", "Could not finish a background subagent", "finished a background subagent", "finished %d background subagents")
+private let skillPhrase = ToolPhrase("Ran skill", "Running skill", "Could not run skill", "ran skill", "ran skill %d times")
 private let taskListPhrase = ToolPhrase("Checked the task list", "Checking the task list", "Could not check the task list", "checked the task list", "checked the task list %d times")
 
 private let toolPhrases: [String: ToolPhrase] = [
-  "Read": readPhrase,
+  // A subagent's hand-back and its notice that it finished, as the parts of a group's summary.
+  "SubagentMessage": ToolPhrase("Received a message", "Receiving a message", "Could not receive a message", "received a message", "received %d messages"),
+  "SubagentFinished": finishedPhrase,
+  "Read": ToolPhrase("Read", "Reading", "Could not read", "read a file", "read %d files"),
   "Write": ToolPhrase("Created", "Creating", "Could not create", "created a file", "created %d files"),
   "Edit": editPhrase,
   "MultiEdit": editPhrase,
@@ -47,7 +50,7 @@ private let toolPhrases: [String: ToolPhrase] = [
   "TaskGet": taskListPhrase,
   "TodoWrite": ToolPhrase("Updated the task list", "Updating the task list", "Could not update the task list", "updated the task list", "updated the task list %d times"),
   "Skill": skillPhrase,
-  "ToolSearch": ToolPhrase("Looked up tools", "Looking up tools", "Could not look up tools", "looked up tools", "looked up tools %d times"),
+  "ToolSearch": ToolPhrase("Loaded tools", "Loading tools", "Could not load tools", "loaded tools", "loaded tools %d times"),
   "ExitPlanMode": ToolPhrase("Proposed a plan", "Proposing a plan", "Proposed a plan", "proposed a plan", "proposed %d plans"),
   "AskUserQuestion": ToolPhrase("Asked a question", "Asking a question", "Could not ask a question", "asked a question", "asked %d questions")
 ]
@@ -156,17 +159,17 @@ func toolActivity(_ name: String, input: JSONValue) -> String {
   return [toolPhrase(for: name).present, toolTarget(name, input: input)].filter { !$0.isEmpty }.joined(separator: " ")
 }
 
-private let pastForms = ["run": "ran", "rerun": "reran", "build": "built", "rebuild": "rebuilt", "make": "made", "find": "found", "read": "read", "write": "wrote", "rewrite": "rewrote", "get": "got", "set": "set", "put": "put", "send": "sent", "take": "took", "give": "gave", "keep": "kept", "do": "did", "undo": "undid", "go": "went", "begin": "began", "split": "split", "commit": "committed", "submit": "submitted", "fetch": "fetched"]
+private let pastForms = ["run": "ran", "rerun": "reran", "build": "built", "rebuild": "rebuilt", "make": "made", "find": "found", "read": "read", "write": "wrote", "rewrite": "rewrote", "get": "got", "set": "set", "put": "put", "send": "sent", "take": "took", "give": "gave", "keep": "kept", "do": "did", "undo": "undid", "go": "went", "begin": "began", "split": "split", "commit": "committed", "submit": "submitted", "fetch": "fetched", "quit": "quit", "reset": "reset", "let": "let", "shut": "shut", "cut": "cut", "shrink": "shrank", "see": "saw", "hold": "held", "leave": "left", "bring": "brought", "choose": "chose", "draw": "drew", "drive": "drove", "hide": "hid", "sleep": "slept", "spend": "spent", "stick": "stuck", "tell": "told", "throw": "threw", "win": "won", "bind": "bound", "dig": "dug", "hang": "hung", "catch": "caught", "teach": "taught", "think": "thought", "feed": "fed", "lead": "led", "forget": "forgot", "sell": "sold", "spin": "spun", "understand": "understood"]
 
 /// A description written as a command, "List files", in the tense a row needs: "Listed files" when done, "Listing files" while running.
-/// A description that does not start with a plain verb stays as it is.
+/// A description that does not start with a plain verb stays as it is. So does a finished one whose verb ends like a participle, "Open" or "Strengthen", as in the desktop app.
 func conjugated(_ description: String, isRunning: Bool) -> String {
   let first = String(description.prefix { $0.isLetter })
   let word = first.lowercased()
-  guard word.count > 1, word.count == description.prefix(while: { !$0.isWhitespace }).count, !word.hasSuffix("ing"), !word.hasSuffix("ed") else { return description }
+  guard word.count > 1, word.count == description.prefix(while: { !$0.isWhitespace }).count, !word.hasSuffix("ing"), !word.hasSuffix("ed"), isRunning || !word.hasSuffix("en") else { return description }
 
   // One vowel then one consonant at the end, as in "stop" and "plan", doubles the consonant.
-  let doubles = word.wholeMatch(of: /[^aeiou]*[aeiou][^aeiouwxy]/) != nil || ["commit", "submit"].contains(word)
+  let doubles = word.wholeMatch(of: /[^aeiou]*[aeiou][^aeiouwxy]/) != nil || ["commit", "submit", "quit"].contains(word)
   var verb: String
 
   if isRunning {
@@ -219,39 +222,27 @@ func oneLine(_ text: String, limit: Int) -> String {
   return "\(head)\u{2026}\(tail)"
 }
 
-/// One piece of a summary sentence. A target, such as a file name, is set apart from the words around it.
-struct SummaryPart: Equatable {
-  var text: String
-  var isTarget = false
-}
-
-/// A run of calls as one sentence: "Read 2 files, ran a command", with skills last. `namesRead` names a lone read's file: "read Notes.md".
-func toolSummary(_ calls: [(name: String, target: String)], namesRead: Bool = false) -> [SummaryPart] {
+/// A run of calls as one sentence: "Read 2 files, ran a command", with skills and finished subagents last. File tools count the files they touched, given as paths.
+/// When every file call touched the same file, the summary names it: "ran a command, created BRIEF.md".
+func toolSummary(_ calls: [(name: String, target: String)]) -> String {
+  let files = Set(calls.filter { fileTools.contains($0.name) }.map(\.target))
   var phrases: [ToolPhrase] = []
-  var parts: [SummaryPart] = []
 
   for call in calls where !phrases.contains(toolPhrase(for: call.name)) { phrases.append(toolPhrase(for: call.name)) }
 
-  phrases = phrases.filter { $0 != skillPhrase } + phrases.filter { $0 == skillPhrase }
+  phrases = phrases.filter { $0 != skillPhrase && $0 != finishedPhrase } + phrases.filter { $0 == skillPhrase } + phrases.filter { $0 == finishedPhrase }
 
-  for (index, phrase) in phrases.enumerated() {
+  let text = phrases.map { phrase in
     let matching = calls.filter { toolPhrase(for: $0.name) == phrase }
-    let one = namesRead && phrase == readPhrase && !matching[0].target.isEmpty ? "read %@" : phrase.one
-    var text = matching.count > 1 ? String(format: phrase.many, matching.count) : one
+    let isFile = fileTools.contains(matching[0].name)
+    let count = isFile ? Set(matching.map(\.target)).count : matching.count
+    let target = isFile ? (matching[0].target as NSString).lastPathComponent : matching[0].target
+    let one = isFile && files.count == 1 && !target.isEmpty ? phrase.past.lowercased() + " " + target : phrase.one.replacingOccurrences(of: "%@", with: target)
 
-    if index == 0 { text = text.prefix(1).uppercased() + text.dropFirst() } else { text = ", " + text }
+    return count > 1 ? String(format: phrase.many, count) : one
+  }.joined(separator: ", ")
 
-    guard matching.count == 1, let range = text.range(of: "%@") else {
-      parts.append(SummaryPart(text: text))
-      continue
-    }
-
-    parts.append(SummaryPart(text: String(text[..<range.lowerBound])))
-    parts.append(SummaryPart(text: matching[0].target, isTarget: true))
-    parts.append(SummaryPart(text: String(text[range.upperBound...])))
-  }
-
-  return parts.filter { !$0.text.isEmpty }
+  return text.prefix(1).uppercased() + text.dropFirst()
 }
 
 /// A tool's input as indented JSON with its keys in a stable order. Empty for an input with no fields.

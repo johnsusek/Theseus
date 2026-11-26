@@ -8,7 +8,7 @@ final class TranscriptView: NSView {
   /// Answers a permission request from its card or from the Session menu.
   var onDecision: (PermissionRequest, PermissionDecision) -> Void = { _, _ in }
   /// A click on a link. Returns false to let the text view open it as usual.
-  var onLink: (Any) -> Bool = { _ in false }
+  var onLink: (Any, NSRect) -> Bool = { _, _ in false }
   /// A next-step card's button, whose title is the reply.
   var onReply: (String) -> Void = { _ in }
 
@@ -41,7 +41,8 @@ final class TranscriptView: NSView {
     }
   }
 
-  var hasPendingRequest: Bool { !requests.isEmpty }
+  /// The kind of the oldest unanswered request, which Session > Allow and Deny answer.
+  var oldestRequestKind: RequestKind? { requests.first.map(RequestKind.init) }
 
   private let scrollView = NSScrollView()
   private let layoutDelegate = TranscriptLayoutDelegate()
@@ -76,6 +77,8 @@ final class TranscriptView: NSView {
     textView.textContainer?.lineFragmentPadding = 0
     textView.textLayoutManager?.delegate = layoutDelegate
     textView.setAccessibilityLabel("Transcript")
+    // Markdown styles each link itself, so the text view only adds the cursor.
+    textView.linkTextAttributes = [.cursor: NSCursor.pointingHand]
     textView.delegate = self
     textView.onToggle = { [unowned self] id in
       builder.toggle(id)
@@ -140,11 +143,21 @@ final class TranscriptView: NSView {
     if let arrived, isPinned { reveal("permission/\(arrived.requestId)") }
   }
 
-  /// Session > Allow and Deny answer the oldest request as its card's buttons would.
-  func answerOldestRequest(allow: Bool) {
-    guard let request = requests.first else { return }
+  /// Session > Allow and Deny answer the oldest request as its card's buttons would. For a question they are Answer,
+  /// with what is picked on its card, and Skip Question. Returns false when the question's card has no complete answer yet.
+  @discardableResult func answerOldestRequest(allow: Bool) -> Bool {
+    guard let request = requests.first else { return false }
 
-    answer(request, allow: allow)
+    guard RequestKind(request) == .question else {
+      answer(request, allow: allow)
+      return true
+    }
+
+    guard let card = views(QuestionCardView.self).first else { return false }
+
+    if !allow { card.skip() }
+
+    return allow ? card.submit() : true
   }
 
   /// Colored marks are for the main window: diff tints, line counts, running and failed marks, and the cards' orange.
@@ -235,15 +248,28 @@ final class TranscriptView: NSView {
   private func card(for element: TranscriptElement) -> NSTextAttachment {
     switch element.kind {
     case .tasks(let tasks):
-      return ViewAttachment { TaskCardView(tasks: tasks) }
+      return ViewAttachment { TaskCardView(steps: tasks) }
     case .footer(let footer):
       guard let turn = element.turn else { return NSTextAttachment() }
 
       return ViewAttachment { [unowned self] in TurnFooterView(footer: footer, turn: turn, isShown: turn == hoveredTurn) }
     case .nextStep(let step):
-      return ViewAttachment { [unowned self] in NextStepCardView(step: step, canReply: canReply) { [unowned self] in onReply($0) } }
+      return ViewAttachment { [unowned self] in
+        NextStepCardView(step: step, canReply: canReply, reply: { [unowned self] in onReply($0) }, close: { [unowned self] in
+          builder.dismissed.insert(element.id)
+          update(keepsPosition: true)
+        })
+      }
     case .permission(let requestId):
       guard let request = requests.first(where: { $0.requestId == requestId }) else { return NSTextAttachment() }
+
+      if RequestKind(request) == .question {
+        return ViewAttachment { [unowned self] in
+          QuestionCardView(questions: request.questions, isActive: isActive) { [unowned self] answers in
+            onDecision(request, answers.map { .answer($0, to: request) } ?? .deny(message: "The user declined to answer."))
+          }
+        }
+      }
 
       let prompt = PermissionPrompt(request, projectName: projectName)
       let body = renderer.permissionBody(prompt.body)
@@ -364,5 +390,12 @@ final class TranscriptView: NSView {
 }
 
 extension TranscriptView: NSTextViewDelegate {
-  func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool { onLink(link) }
+  /// Passes the clicked link's first line rect, in the text view's coordinates, so a popover can point at it.
+  func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+    var range = NSRange(location: charIndex, length: 1)
+    _ = textView.textStorage?.attribute(.link, at: charIndex, effectiveRange: &range)
+    let screen = textView.firstRect(forCharacterRange: range, actualRange: nil)
+    let local = textView.window.map { textView.convert($0.convertFromScreen(screen), from: nil) } ?? .zero
+    return onLink(link, local)
+  }
 }

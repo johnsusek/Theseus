@@ -18,6 +18,8 @@ struct ToolRow: Equatable {
   var removed = 0
   var state = State.completed
   var isExpanded = false
+  /// A background agent's row has nothing to open: its report comes back as a message of its own.
+  var opens = true
   var tooltip = ""
   var copy: CopySource?
   /// Images the call returned, drawn small at the row's right edge.
@@ -35,7 +37,9 @@ struct Thumbnail: Equatable {
 /// A run of finished tool calls as one sentence.
 struct GroupRow: Equatable {
   var id: String
-  var summary: [SummaryPart]
+  var summary: String
+  /// The file a summary names at its end, "read quit-s.png", drawn as a row's target rather than gray.
+  var file = ""
   var added = 0
   var removed = 0
   var isExpanded = false
@@ -109,9 +113,13 @@ struct TranscriptElement: Equatable, Identifiable {
     case question([AnsweredQuestion])
     /// An image SendUserFile showed the user, drawn large.
     case image(SentImage)
+    /// ReportFindings' findings in a bordered card.
+    case review(ReviewCard)
     /// An earlier turn's next-step question, which opens to show its recap.
     case ask(String, isExpanded: Bool)
-    case tasks([TaskItem])
+    case tasks([PlanStep])
+    /// A gray line under the transcript, "2 subagents working", while agents run on after their turn.
+    case status(String)
     case permission(requestId: String)
     case nextStep(NextStep)
     case footer(TurnFooter)
@@ -126,6 +134,19 @@ struct TranscriptElement: Equatable, Identifiable {
   var box: BoxSlot?
 }
 
+/// A row of the task list card: a step of the desktop app's `update_plan` list, or a task from the CLI's task list.
+struct PlanStep: Equatable {
+  enum State: Equatable {
+    /// `waiting` is a step whose turn ended while agents it started still run.
+    case done, running, waiting, pending
+  }
+
+  var title: String
+  var state: State
+  /// "2 subagents working" under a waiting step.
+  var note: String?
+}
+
 struct AnsweredQuestion: Equatable {
   var question: String
   var answer: String?
@@ -135,6 +156,24 @@ struct AnsweredQuestion: Equatable {
 struct SentImage: Equatable {
   var id: String
   var path: String
+}
+
+/// A code review's findings: "High effort, 6 findings", then each finding, grouped by file in the order the files first come up.
+struct ReviewCard: Equatable {
+  var heading: String
+  var findings: [ReviewFinding]
+}
+
+struct ReviewFinding: Equatable {
+  var id: String
+  var file: String
+  var title: String
+  /// The finding in full, which shows while it is open.
+  var detail: String
+  var severity: String?
+  /// What was done about it, from this report or a later one: `fixed`, `skipped` or `no_change_needed`.
+  var outcome: String?
+  var isExpanded = false
 }
 
 /// Under a finished turn, shown while the pointer is over the turn: "2:14 PM · 1m 52s", and the turn's replies for its Copy button.
@@ -149,7 +188,8 @@ let wrapUpToolName = "mcp__theseus__wrap_up"
 /// The desktop app's own turn tools, in sessions it ran: its `wrap_up` reads as a card like Theseus's, and its task list call has no row.
 /// An earlier turn's `wrap_up` leaves its question as a row.
 private let wrapUpToolNames: Set = [wrapUpToolName, "mcp__ccd_turn__wrap_up"]
-private let unshownToolNames = wrapUpToolNames.union(["mcp__ccd_turn__update_plan"])
+private let planToolName = "mcp__ccd_turn__update_plan"
+private let unshownToolNames = wrapUpToolNames.union([planToolName])
 
 /// The last turn's recap, with a question and reply buttons. It goes away once anything is sent, as the desktop app's does.
 struct NextStep: Equatable {
@@ -160,10 +200,14 @@ struct NextStep: Equatable {
   init(input: JSONValue) {
     recap = input["recap"]?.string ?? ""
     ask = input["ask"]?.string.flatMap { $0.allSatisfy(\.isWhitespace) ? nil : $0 }
-    // The desktop app's actions are objects with a label.
-    actions = Array((input["actions"]?.array ?? []).compactMap { $0.string ?? $0["label"]?.string }.prefix(2))
+    // The desktop app's actions are objects with a label, or with one of its own actions, which a button sends by name.
+    // Archiving and starting a session are not replies, so they get no button.
+    actions = Array((input["actions"]?.array ?? []).compactMap { $0.string ?? $0["label"]?.string ?? $0["action"]?.string.flatMap { appActions[$0] } }.prefix(2))
   }
 }
+
+/// The desktop app's `wrap_up` actions that a reply can carry out, by the label its buttons show.
+private let appActions = ["commit": "Commit changes", "create_pr": "Create PR", "merge": "Merge PR", "fix_ci": "Fix CI", "address_comments": "Address comments", "resolve_conflicts": "Resolve conflicts", "verify": "Verify"]
 
 /// A permission prompt waiting for an answer.
 struct PendingRequest: Equatable {
@@ -203,6 +247,8 @@ struct TranscriptBuilder {
   var expanded: Set<String> = [] { didSet { cache = [:] } }
   /// Tool calls whose capped output is shown in full.
   var unfolded: Set<String> = [] { didSet { cache = [:] } }
+  /// Next-step cards the user closed, which show as an earlier turn's question row.
+  var dismissed: Set<String> = [] { didSet { cache = [:] } }
   var calendar = Calendar.current
   var locale = Locale.current
 
@@ -223,7 +269,8 @@ struct TranscriptBuilder {
     var status: Turn.Status
     var isRunning: Bool
     var isLatest: Bool
-    var tasks: [TaskItem]
+    /// The task list card the turn ends with, only ever on the last turn.
+    var tasks: [PlanStep]
     var pending: [PendingRequest]
     /// A footer names the day unless it is today.
     var today: Date
@@ -236,6 +283,7 @@ struct TranscriptBuilder {
     var isFollowedByRun: Bool
     /// The next turn shows no prompt, so it reads as more of this one, and this one leaves the footer to it.
     var continuesInNext: Bool
+    var outcomes: [String: String]
   }
 
   private struct CachedTurn {
@@ -264,6 +312,8 @@ struct TranscriptBuilder {
     case question(id: String, call: ToolCall)
     /// A finished SendUserFile.
     case sentFile(id: String, call: ToolCall)
+    /// A finished ReportFindings.
+    case review(id: String, call: ToolCall)
   }
 
   private struct Context {
@@ -276,6 +326,8 @@ struct TranscriptBuilder {
     var isLatest = false
     var activity: Activity?
     var runs: [ShellRun] = []
+    /// What later reports said was done about findings, by `findingKey`.
+    var outcomes: [String: String] = [:]
   }
 
   /// Opens or closes a row or group, or shows or hides the rest of a capped output.
@@ -301,6 +353,13 @@ struct TranscriptBuilder {
     var attached: Set<Int> = []
     var replied: Turn?
 
+    // A report of what was done about a review's findings also marks them in the review's own card.
+    for call in context.transcript.toolCalls where call.name == "ReportFindings" {
+      for finding in call.input["findings"]?.array ?? [] {
+        if let outcome = finding["outcome"]?.string { context.outcomes[findingKey(finding)] = outcome }
+      }
+    }
+
     // A command run from a code block goes under that block in the turn before it, as the desktop app shows it.
     for turn in turns {
       guard let run = ShellRun(prompt: turn.prompt?.text) else {
@@ -323,13 +382,19 @@ struct TranscriptBuilder {
       attached.insert(turn.id)
     }
 
+    let plan = plan(input.transcript)
+    let isLastRunning = input.isLive && turns.last?.status == .running
+    let lastPlans = turns.last?.toolCallIds.contains { input.transcript.toolCall($0)?.name == planToolName } == true
+    let card = cardSteps(plan, tasks: input.tasks, isRunning: isLastRunning, hasPlanned: lastPlans, agents: context.agents)
+
     for (index, turn) in turns.enumerated() {
-      let isRunning = index == turns.count - 1 && input.isLive && turn.status == .running
+      let isRunning = index == turns.count - 1 && isLastRunning
       let isLatest = index == turns.count - 1 && !isRunning && input.sent.isEmpty
       let next = index + 1 < turns.count ? turns[index + 1] : nil
       let isFollowedByRun = next.map { attached.contains($0.id) } ?? false
-      let continuesInNext = isFollowedByRun || next?.origin == "task_notification"
-      let key = TurnKey(range: turn.messageRange, lastItemId: turn.items.last?.id, status: turn.status, isRunning: isRunning, isLatest: isLatest, tasks: isRunning ? input.tasks : [], pending: input.pending, today: today, activity: isRunning ? input.activity : nil, runs: runs[turn.id] ?? [], isAttached: attached.contains(turn.id), isFollowedByRun: isFollowedByRun, continuesInNext: continuesInNext)
+      // A subagent's hand-back reads as more of the turn before it too.
+      let continuesInNext = isFollowedByRun || next?.origin == "task_notification" || (next?.origin == "peer" && next?.prompt?.text.contains("[Subagent hand-back]") == true)
+      let key = TurnKey(range: turn.messageRange, lastItemId: turn.items.last?.id, status: turn.status, isRunning: isRunning, isLatest: isLatest, tasks: index == turns.count - 1 ? card : [], pending: input.pending, today: today, activity: isRunning ? input.activity : nil, runs: runs[turn.id] ?? [], isAttached: attached.contains(turn.id), isFollowedByRun: isFollowedByRun, continuesInNext: continuesInNext, outcomes: context.outcomes)
       var built: BuiltTurn
 
       context.isRunning = isRunning
@@ -370,6 +435,14 @@ struct TranscriptBuilder {
 
     if let activity, !isQueuedBehind { elements.append(activity) }
 
+    // Agents still running after their turn, other than those the task list card counts under its step.
+    let shownInCard = card.contains { $0.state == .waiting }
+    let working = isLastRunning || !input.isLive ? 0 : context.agents.values.count { task in
+      task.kind == .agent && task.parentId == nil && task.status.isActive && !(shownInCard && plan.agentSteps[task.id] == plan.steps.firstIndex { $0.status == .inProgress })
+    }
+
+    if working > 0 { elements.append(TranscriptElement(id: "working", kind: .status(subagentsWorking(working)), spacing: 30)) }
+
     // A subagent's request has no row on the main thread, so its card goes last.
     for request in input.pending where !placed.contains(request.requestId) {
       elements.append(TranscriptElement(id: "permission/\(request.requestId)", kind: .permission(requestId: request.requestId)))
@@ -379,6 +452,70 @@ struct TranscriptBuilder {
 
     return elements
   }
+
+  private struct Plan {
+    var steps: [(title: String, status: TaskItem.Status)] = []
+    /// The step that was in progress when each Agent call was made, by the call's id.
+    var agentSteps: [String: Int] = [:]
+  }
+
+  /// The desktop app's task list as the session's `update_plan` calls left it.
+  private func plan(_ transcript: Transcript) -> Plan {
+    var plan = Plan()
+
+    for turn in transcript.turns {
+      for case .toolCall(let id) in turn.items.map(\.content) {
+        guard let call = transcript.toolCall(id) else { continue }
+
+        if call.name == "Agent" || call.name == "Task" { plan.agentSteps[id] = plan.steps.firstIndex { $0.status == .inProgress } }
+
+        guard call.name == planToolName, !call.isError else { continue }
+
+        let input = call.input
+
+        // A new list starts over, so agents started under the old one belong to none of its steps.
+        if let items = input["items"]?.array {
+          plan.steps = items.map { (title: $0["content"]?.string ?? "", status: $0["status"]?.string.flatMap(TaskItem.Status.init) ?? .pending) }
+          plan.agentSteps = [:]
+        }
+
+        if input["advance"]?.bool == true {
+          if let current = plan.steps.firstIndex(where: { $0.status == .inProgress }) { plan.steps[current].status = .completed }
+
+          if let next = plan.steps.firstIndex(where: { $0.status == .pending }) { plan.steps[next].status = .inProgress }
+        }
+
+        for number in (input["done"]?.array ?? []).compactMap(\.int) where plan.steps.indices.contains(number - 1) { plan.steps[number - 1].status = .completed }
+
+        if let number = input["start"]?.int, plan.steps.indices.contains(number - 1) { plan.steps[number - 1].status = .inProgress }
+      }
+    }
+
+    return plan
+  }
+
+  /// The card the last turn ends with: the plan while the turn runs and a step is left, or, once a turn that changed the plan ends,
+  /// the plan while agents its current step started still run. Without a plan, the CLI's task list while the turn runs.
+  private func cardSteps(_ plan: Plan, tasks: [TaskItem], isRunning: Bool, hasPlanned: Bool, agents: [String: ClaudeTask]) -> [PlanStep] {
+    let state: (TaskItem.Status) -> PlanStep.State = { $0 == .completed ? .done : $0 == .inProgress ? .running : .pending }
+
+    guard !plan.steps.isEmpty else { return isRunning ? tasks.map { PlanStep(title: $0.status == .inProgress ? $0.activeForm ?? $0.subject : $0.subject, state: state($0.status)) } : [] }
+
+    var steps = plan.steps.map { PlanStep(title: $0.title, state: state($0.status)) }
+
+    if isRunning { return steps.contains { $0.state != .done } ? steps : [] }
+
+    guard hasPlanned, let current = plan.steps.firstIndex(where: { $0.status == .inProgress }) else { return [] }
+
+    let working = plan.agentSteps.count { $0.value == current && agents[$0.key]?.status.isActive == true }
+    guard working > 0 else { return [] }
+
+    steps[current].state = .waiting
+    steps[current].note = subagentsWorking(working)
+    return steps
+  }
+
+  private func subagentsWorking(_ count: Int) -> String { count == 1 ? "1 subagent working" : "\(count) subagents working" }
 
   private func agentState(_ task: ClaudeTask?) -> AgentState? {
     task.map { AgentState(status: $0.status, usage: $0.usage, summary: $0.summary) }
@@ -391,14 +528,18 @@ struct TranscriptBuilder {
 
   private func build(_ turn: Turn, key: TurnKey, streaming: [StreamingMessage.Block], context: Context) -> BuiltTurn {
     var built = BuiltTurn()
+    // A subagent's message that opens the turn folds with the turn's first calls.
+    var leading: [Entry] = []
 
     if let run = ShellRun(prompt: turn.prompt?.text) {
       if !key.isAttached { built.elements.append(TranscriptElement(id: "\(turn.id)/shell", kind: .shell(command: run.command, output: run.output), spacing: 22)) }
+    } else if let prompt = turn.prompt?.text, message(id: "", text: prompt, context: context) != nil {
+      leading = [.prompt(id: "\(turn.id)/prompt", text: prompt, origin: turn.origin)]
     } else if let prompt = turn.prompt?.text, !prompt.allSatisfy(\.isWhitespace), let kind = promptKind(prompt, origin: turn.origin) {
       built.elements.append(TranscriptElement(id: "\(turn.id)/prompt", kind: kind, spacing: 22))
     }
 
-    var body = blocks(entries(turnId: String(turn.id), items: turn.items, streaming: streaming, context: context), tasks: key.tasks, context: context)
+    var body = blocks(leading + entries(turnId: String(turn.id), items: turn.items, streaming: streaming, context: context), tasks: key.tasks, context: context)
 
     // The desktop app leaves more room under a prompt than between a turn's own blocks.
     if !built.elements.isEmpty, !body.elements.isEmpty { body.elements[0].spacing = 34 }
@@ -414,7 +555,11 @@ struct TranscriptBuilder {
       return context.transcript.toolCall(callId).flatMap { wrapUpToolNames.contains($0.name) ? $0 : nil }
     }.first
 
-    if let wrapUp, context.isLatest {
+    let step = wrapUp.map { NextStep(input: $0.input) }
+    // The desktop app draws no box for a recap that leaves the user nothing to answer; its closing message says the rest.
+    let hasCard = wrapUp?.name == wrapUpToolName || step?.ask != nil || step?.actions.isEmpty == false
+
+    if let wrapUp, context.isLatest, hasCard, !dismissed.contains("\(turn.id)/next") {
       built.elements.append(TranscriptElement(id: "\(turn.id)/next", kind: .nextStep(NextStep(input: wrapUp.input))))
     } else if let wrapUp, !key.isFollowedByRun, let ask = NextStep(input: wrapUp.input).ask {
       let id = "\(turn.id)/ask"
@@ -438,6 +583,25 @@ struct TranscriptBuilder {
     for index in built.elements.indices { built.elements[index].turn = turn.id }
 
     return built
+  }
+
+  /// A subagent's report, handed back as a prompt of its own, or its notice that it finished, as a row that folds with the calls around it.
+  /// The hand-back reads "Message from subagent" and the agent's description, and opens to the report.
+  /// The notice reads "Background subagent completed · Seed transcripts · took 4m 1s".
+  private func message(id: String, text: String, context: Context) -> (row: ToolRow, detail: [DetailBlock], name: String)? {
+    if let match = text.firstMatch(of: /<agent-message from="([^"]*)">([\s\S]*?)<\/agent-message>/), match.2.contains("[Subagent hand-back]") {
+      let agentId = String(match.1)
+      let task = context.agents.values.first { $0.taskId == agentId }
+      let row = ToolRow(id: id, verb: "Message from subagent", target: task?.description ?? "", isExpanded: isVerbose || expanded.contains(id))
+      return (row, [.report(agentReport(String(match.2)))], "SubagentMessage")
+    }
+
+    guard text.contains("<task-notification>"), let summary = text.firstMatch(of: /<summary>Agent "([\s\S]*)" finished<\/summary>/) else { return nil }
+
+    let took = text.firstMatch(of: /<duration_ms>(\d+)<\/duration_ms>/).flatMap { Int($0.1) }.map { "took " + durationText(.milliseconds($0)) }
+    var row = ToolRow(id: id, verb: ["Background subagent completed", String(summary.1), took].compactMap { $0 }.joined(separator: " \u{B7} "), target: "")
+    row.opens = false
+    return (row, [], "SubagentFinished")
   }
 
   /// Nil for a task notification, which the desktop app does not show.
@@ -477,11 +641,16 @@ struct TranscriptBuilder {
           entries.append(.question(id: callId, call: call))
         } else if call.name == "SendUserFile", call.status == .completed {
           entries.append(.sentFile(id: callId, call: call))
+        } else if call.name == "ReportFindings", call.status == .completed {
+          entries.append(.review(id: callId, call: call))
         } else {
           entries.append(.tool(id: callId, name: call.name, input: call.input, call: call))
         }
       case .prompt(let blocks, let origin):
-        if !blocks.text.allSatisfy(\.isWhitespace) { entries.append(.prompt(id: id, text: blocks.text, origin: origin)) }
+        // Of the task notices only a subagent's finishing shows; the others would split the calls around them.
+        guard !blocks.text.allSatisfy(\.isWhitespace), origin != "task_notification" || message(id: id, text: blocks.text, context: context) != nil else { break }
+
+        entries.append(.prompt(id: id, text: blocks.text, origin: origin))
       }
     }
 
@@ -506,12 +675,12 @@ struct TranscriptBuilder {
     return entries
   }
 
-  /// Folds runs of finished tool calls into groups and lays the entries out as elements. A running turn's task list follows its first block.
-  private func blocks(_ entries: [Entry], tasks: [TaskItem], context: Context) -> BuiltTurn {
+  /// Folds runs of finished tool calls into groups and lays the entries out as elements, with the task list card after them.
+  private func blocks(_ entries: [Entry], tasks: [PlanStep], context: Context) -> BuiltTurn {
     var built = BuiltTurn()
     var index = 0
-    var isFirst = true
     var followsPrompt = false
+    var liveStart: Int?
 
     while index < entries.count {
       let start = built.elements.count
@@ -522,14 +691,18 @@ struct TranscriptBuilder {
       }
 
       let run = Array(entries[index..<end])
+      // Subagent messages fold only with calls; on their own each shows as its row.
+      let hasCall = run.contains { if case .tool = $0 { true } else { false } }
       // While the turn runs, its last calls fold under what it is doing, as the desktop app shows them.
-      let live = context.isRunning && end == entries.count && folds(run[0], context: context) ? context.activity : nil
+      let live = context.isRunning && end == entries.count && hasCall ? context.activity : nil
 
-      if run.count > 1 || live != nil {
+      if hasCall, run.count > 1 || live != nil {
+        if live != nil { liveStart = built.elements.count }
+
         group(run, live: live, into: &built, context: context)
         built.showsActivity = live != nil
       } else {
-        single(run[0], into: &built, context: context)
+        for entry in run { single(entry, into: &built, context: context) }
       }
 
       // A prompt taken mid-turn gets the room a turn's own prompt does.
@@ -537,20 +710,19 @@ struct TranscriptBuilder {
 
       if case .prompt = run[0], start < built.elements.count, case .prompt = built.elements[start].kind { followsPrompt = true } else { followsPrompt = false }
 
-      if isFirst, !tasks.isEmpty { built.elements.append(TranscriptElement(id: "tasks", kind: .tasks(tasks))) }
-
-      isFirst = false
       index = end
     }
 
-    // A turn with nothing to show yet, or only thinking that has since been folded away, still lists its tasks.
-    if isFirst, !tasks.isEmpty { built.elements.append(TranscriptElement(id: "tasks", kind: .tasks(tasks))) }
+    // The task list follows what the turn has shown so far, above what it is doing now.
+    if !tasks.isEmpty { built.elements.insert(TranscriptElement(id: "tasks", kind: .tasks(tasks)), at: liveStart ?? built.elements.count) }
 
     return built
   }
 
-  /// A tool call folds into a group unless it waits on a permission card, which shows under its own row.
+  /// A tool call folds into a group unless it waits on a permission card, which shows under its own row. So does a subagent's message.
   private func folds(_ entry: Entry, context: Context) -> Bool {
+    if case .prompt(let id, let text, _) = entry { return message(id: id, text: text, context: context) != nil }
+
     guard case .tool(let id, _, _, _) = entry else { return false }
 
     return !context.pending.contains { $0.toolUseId == id }
@@ -581,6 +753,14 @@ struct TranscriptBuilder {
     case .thought(let id, let text):
       built.elements.append(TranscriptElement(id: id, kind: .thought(text.trimmingCharacters(in: .whitespacesAndNewlines))))
     case .prompt(let id, let text, let origin):
+      if let message = message(id: id, text: text, context: context) {
+        built.elements.append(TranscriptElement(id: id, kind: .tool(message.row)))
+
+        if message.row.isExpanded { built.elements.append(TranscriptElement(id: "\(id)/detail", kind: .detail(message.detail), spacing: 8)) }
+
+        return
+      }
+
       guard let kind = promptKind(text, origin: origin) else { break }
 
       var isBubble = false
@@ -590,6 +770,8 @@ struct TranscriptBuilder {
       built.elements.append(TranscriptElement(id: id, kind: kind, spacing: isBubble ? 22 : 18))
     case .question(let id, let call):
       question(id: id, call: call, into: &built, context: context)
+    case .review(let id, let call):
+      review(id: id, call: call, into: &built, context: context)
     case .sentFile(let id, let call):
       if let caption = call.input["caption"]?.string, !caption.allSatisfy(\.isWhitespace) { built.elements.append(TranscriptElement(id: "\(id)/caption", kind: .reply(caption))) }
 
@@ -636,11 +818,18 @@ struct TranscriptBuilder {
     var rows: [(row: ToolRow, detail: [DetailBlock])] = []
     var calls: [(name: String, target: String)] = []
 
-    for case .tool(let id, let name, let input, let call) in run {
+    for entry in run {
+      if case .prompt(let id, let text, _) = entry, let message = message(id: id, text: text, context: context) {
+        rows.append((message.row, message.row.isExpanded ? message.detail : []))
+        calls.append((message.name, ""))
+      }
+
+      guard case .tool(let id, let name, let input, let call) = entry else { continue }
+
       let row = row(id: id, name: name, input: input, call: call, context: context)
       rows.append((row, row.isExpanded ? detail(id: id, name: name, input: input, call: call, context: context) : []))
       // A Write that replaced a file counts as an edit.
-      calls += (isUpdate(name, call: call) ? ["Edit"] : phraseNames(name, input: input)).map { ($0, row.target) }
+      calls += (isUpdate(name, call: call) ? ["Edit"] : phraseNames(name, input: input)).map { ($0, toolPath(name, input: input) ?? row.target) }
 
       if context.agents[id] != nil { built.agentIds.append(id) }
 
@@ -650,11 +839,13 @@ struct TranscriptBuilder {
     let id = "group/\(rows[0].row.id)"
     let isExpanded = isVerbose || expanded.contains(id)
     let failed = rows.count { $0.row.state == .failed }
-    var summary = toolSummary(calls, namesRead: !calls.contains { ["Edit", "Write", "MultiEdit", "NotebookEdit"].contains($0.name) })
+    var summary = toolSummary(calls)
 
-    if failed > 0 { summary.append(SummaryPart(text: ", \(failed) failed")) }
+    if failed > 0 { summary += ", \(failed) failed" }
 
-    let header = GroupRow(id: id, summary: summary, added: rows.reduce(0) { $0 + $1.row.added }, removed: rows.reduce(0) { $0 + $1.row.removed }, isExpanded: isExpanded, activity: live, thumbnails: Array(rows.flatMap(\.row.thumbnails).prefix(4)))
+    let reads = Set(calls.filter { $0.name == "Read" }.map { ($0.target as NSString).lastPathComponent })
+    let file = reads.count == 1 && summary.hasSuffix("read \(reads.first!)") ? reads.first! : ""
+    let header = GroupRow(id: id, summary: summary, file: file, added: rows.reduce(0) { $0 + $1.row.added }, removed: rows.reduce(0) { $0 + $1.row.removed }, isExpanded: isExpanded, activity: live, thumbnails: Array(rows.flatMap(\.row.thumbnails).prefix(4)))
     built.elements.append(TranscriptElement(id: id, kind: .group(header)))
     guard isExpanded else { return }
 
@@ -692,6 +883,36 @@ struct TranscriptBuilder {
     built.elements.append(TranscriptElement(id: id, kind: .question(questions.map { AnsweredQuestion(question: $0.text, answer: $0.answer) }), box: BoxSlot(isFirst: true, isLast: true)))
   }
 
+  /// A review's findings in a card. A report of what was done about them is one row, "Code review 1 fixed, 5 skipped", that opens to its card.
+  private func review(id: String, call: ToolCall, into built: inout BuiltTurn, context: Context) {
+    let items = call.input["findings"]?.array ?? []
+    let level = call.input["level"]?.string.map { ($0 == "xhigh" ? "Extra high" : $0.capitalized) + " effort" }
+    let total = items.count == 1 ? "1 finding" : "\(items.count) findings"
+    let findings = items.enumerated().map { index, item in
+      let findingId = "\(id)/\(index)"
+      let title = item["short_summary"]?.string ?? oneLine(item["summary"]?.string ?? "", limit: 80)
+      let detail = [item["summary"]?.string, item["failure_scenario"]?.string].compactMap { $0 }.joined(separator: "\n\n")
+      return ReviewFinding(id: findingId, file: ((item["file"]?.string ?? "") as NSString).lastPathComponent, title: title, detail: detail, severity: item["severity"]?.string, outcome: item["outcome"]?.string ?? context.outcomes[findingKey(item)], isExpanded: isVerbose || expanded.contains(findingId))
+    }
+    let card = TranscriptElement(id: id, kind: .review(ReviewCard(heading: [level, total].compactMap { $0 }.joined(separator: ", "), findings: findings)), box: BoxSlot(isFirst: true, isLast: true))
+
+    guard items.contains(where: { $0["outcome"] != nil }) else { return built.elements.append(card) }
+
+    let counts = [("fixed", "fixed"), ("skipped", "skipped"), ("no_change_needed", "needed no change")].compactMap { outcome, words in
+      let count = findings.count { $0.outcome == outcome }
+      return count > 0 ? "\(count) \(words)" : nil
+    }
+    let rowId = "\(id)/outcome"
+    let isExpanded = isVerbose || expanded.contains(rowId)
+    built.elements.append(TranscriptElement(id: rowId, kind: .group(GroupRow(id: rowId, summary: ["Code review", counts.joined(separator: ", ")].filter { !$0.isEmpty }.joined(separator: " "), isExpanded: isExpanded))))
+
+    if isExpanded {
+      var open = card
+      open.spacing = 8
+      built.elements.append(open)
+    }
+  }
+
   private func row(id: String, name: String, input: JSONValue, call: ToolCall?, context: Context) -> ToolRow {
     let names = phraseNames(name, input: input)
     let phrase = toolPhrase(for: names.count == 1 ? names[0] : name)
@@ -715,12 +936,17 @@ struct TranscriptBuilder {
 
       if isDenied { notes.append("Denied") }
     default:
-      row.state = context.pending.contains { $0.toolUseId == id } ? .waiting : context.isRunning ? .running : .stopped
+      // A question waits on an answer, not an approval, so its row reads as running.
+      let isPending = name != "AskUserQuestion" && context.pending.contains { $0.toolUseId == id }
+      row.state = isPending ? .waiting : context.isRunning ? .running : .stopped
     }
 
     if row.state == .completed, isUpdate(name, call: call) { row.verb = "Updated" }
 
-    if let task = context.agents[id] {
+    if let task = context.agents[id], task.isBackground {
+      row.opens = false
+      row.isExpanded = false
+    } else if let task = context.agents[id] {
       if let type = task.subagentType { notes.append(type) }
 
       if let usage = task.usage {
@@ -754,7 +980,7 @@ struct TranscriptBuilder {
 
     // A browser batch reads as the actions in it.
     if names.count > 1 {
-      row.verb = toolSummary(names.map { ($0, "") }).map(\.text).joined()
+      row.verb = toolSummary(names.map { ($0, "") })
       row.target = ""
     }
 
@@ -856,6 +1082,11 @@ struct TranscriptBuilder {
 
     return duration.formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow).locale(locale))
   }
+}
+
+/// Matches a finding in a later report to the same finding in an earlier one.
+private func findingKey(_ finding: JSONValue) -> String {
+  "\(finding["file"]?.string ?? "")|\(finding["short_summary"]?.string ?? finding["summary"]?.string ?? "")"
 }
 
 /// Files SendUserFile shows as an image.

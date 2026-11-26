@@ -137,16 +137,17 @@ final class DecoratedFragment: NSTextLayoutFragment {
     context.restoreGState()
   }
 
-  /// A rounded fill behind each inline code span, one per line the span reaches. The span's kerning leaves room for the padding.
+  /// A rounded fill behind each inline code span or badge, one per line the span reaches. The span's kerning leaves room for the padding.
   private func drawChips(in context: CGContext) {
-    context.setFillColor(NSColor.quaternarySystemFill.cgColor)
-
     for line in textLineFragments {
       let string = line.attributedString
       let bounds = line.typographicBounds
 
       string.enumerateAttribute(.inlineCode, in: line.characterRange) { value, run, _ in
         guard value != nil, let font = string.attribute(.font, at: run.location, effectiveRange: nil) as? NSFont else { return }
+
+        // A badge carries its own fill.
+        context.setFillColor(((value as? NSColor) ?? .quaternarySystemFill).cgColor)
 
         let start = line.locationForCharacter(at: run.location).x
         let end = line.locationForCharacter(at: NSMaxRange(run)).x

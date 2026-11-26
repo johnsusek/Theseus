@@ -11,6 +11,8 @@ extension NSAttributedString.Key {
   static let bubbleWidth = NSAttributedString.Key("Theseus.bubbleWidth")
   /// On text laid out for the column's width, such as a table's rows, which is rendered again when the width changes.
   static let fitsColumn = NSAttributedString.Key("Theseus.fitsColumn")
+  /// The text a copy puts on the pasteboard in place of the run's own: a table row's cells, unwrapped and tab-separated.
+  static let copyText = NSAttributedString.Key("Theseus.copyText")
   /// On an inline code span, which the layout draws on a rounded chip.
   static let inlineCode = NSAttributedString.Key("Theseus.inlineCode")
 }
@@ -145,9 +147,9 @@ extension [Paragraph] {
 
 @MainActor
 enum TranscriptStyle {
-  static let font = NSFont.systemFont(ofSize: 15)
+  static let font = NSFont.systemFont(ofSize: 15, weight: .light)
   static let callout = NSFont.systemFont(ofSize: 12)
-  static let digits = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .regular)
+  static let digits = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .light)
   /// An image a tool call returned, at the right edge of its row.
   static let thumbnailSize = NSSize(width: 34, height: 20)
   static let calloutDigits = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)

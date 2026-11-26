@@ -18,7 +18,8 @@ struct MarkdownTests {
   }
 
   @Test func blocksBecomeParagraphs() {
-    #expect(text("# Title\n\nBody with **bold** and `code`.\nSame paragraph.") == "Title\nBody with bold and code. Same paragraph.")
+    // A single newline breaks the line inside its paragraph, as a hard break does.
+    #expect(text("# Title\n\nBody with **bold** and `code`.\nSame paragraph.") == "Title\nBody with bold and code.\u{2028}Same paragraph.")
     #expect(text("1. First\n2. Second\n   - Nested") == "\t1.\tFirst\n\t2.\tSecond\n\t\u{2022}\tNested")
     #expect(text("Line one\\\nLine two") == "Line one\u{2028}Line two")
     #expect(text("| Name | Count |\n|:--|--:|\n| turns | 12 |") == "Name\tCount\nturns\t12")
@@ -42,7 +43,31 @@ struct MarkdownTests {
   @Test func fittingNarrowsOnlyTheWideColumns() {
     #expect(Markdown.fit([50, 100], into: 200) == [50, 100])
     #expect(Markdown.fit([50, 300, 300], into: 250) == [50, 100, 100])
-    #expect(Markdown.fit([10, 10], into: 5) == [40, 40])
+    // Columns go no narrower than their longest word while the words fit, and shrink in proportion once they don't.
+    #expect(Markdown.fit([200, 200], minimums: [150, 50], into: 250) == [150, 100])
+    #expect(Markdown.fit([200, 200], minimums: [100, 100], into: 100) == [50, 50])
+    #expect(Markdown.fit([10, 10], into: 5) == [2, 2])
+  }
+
+  @Test func wideTablesKeepTheirWordsWholeAndStayInTheColumn() {
+    let header = (1...6).map { "Heading\($0)" }
+    let source = "| " + header.joined(separator: " | ") + " |\n|" + String(repeating: "---|", count: 6) + "\n| " + (1...6).map { "Language\($0) words" }.joined(separator: " | ") + " |"
+    let width = 520.0
+    let rows = Markdown.paragraphs(source, style: MarkdownStyle(width: width))
+    let lines = rows.flatMap { $0.content.string.components(separatedBy: "\u{2028}") }
+
+    // Each heading is whole on one line of its row, and no row is wider than the column.
+    #expect(header.allSatisfy { heading in lines.contains { $0.components(separatedBy: "\t").contains(heading) } })
+    #expect(rows.allSatisfy { ($0.base[.paragraphStyle] as? NSParagraphStyle)?.tabStops.last.map { $0.location <= width } ?? true })
+  }
+
+  @Test func filePathInCodeIsALink() {
+    let rendered = Markdown.paragraphs("Open `/Applications/Theseus.app` from `/Users/bench/seeds/` or `Markdown.swift`").joined(terminated: false)
+    let string = rendered.string as NSString
+
+    #expect(rendered.attribute(.link, at: string.range(of: "Theseus.app").location, effectiveRange: nil) as? URL == URL(filePath: "/Applications/Theseus.app"))
+    #expect(rendered.attribute(.inlineCode, at: string.range(of: "seeds").location, effectiveRange: nil) != nil)
+    #expect(rendered.attribute(.inlineCode, at: string.range(of: "Markdown").location, effectiveRange: nil) != nil)
   }
 
   @Test func inlineStylesMapToAttributes() {
@@ -51,7 +76,7 @@ struct MarkdownTests {
 
     func attributes(of word: String) -> [NSAttributedString.Key: Any] { rendered.attributes(at: string.range(of: word).location, effectiveRange: nil) }
 
-    #expect((attributes(of: "bold")[.font] as? NSFont)?.fontDescriptor.symbolicTraits.contains(.bold) == true)
+    #expect(attributes(of: "bold")[.font] as? NSFont == NSFont.systemFont(ofSize: MarkdownStyle().font.pointSize, weight: .semibold))
     #expect((attributes(of: "italic")[.font] as? NSFont)?.fontDescriptor.symbolicTraits.contains(.italic) == true)
     #expect((attributes(of: "code")[.font] as? NSFont)?.isFixedPitch == true)
     #expect(attributes(of: "code")[.inlineCode] != nil)

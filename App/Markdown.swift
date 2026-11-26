@@ -289,14 +289,23 @@ enum Markdown {
   /// TextKit 2 has no table layout, so a row is a line per wrapped cell line, with a tab stop per column.
   /// A column is as wide as its widest cell while the table fits the column; otherwise `fit` narrows the widest columns.
   private static func rows(_ table: Table, style: MarkdownStyle) -> [Paragraph] {
-    let gap = 24.0
-    var widths = [CGFloat](repeating: 0, count: table.columns.count)
+    var table = table
+    var (widths, words) = measure(table)
 
-    for row in table.rows {
-      for (column, cell) in row.cells where column < widths.count { widths[column] = max(widths[column], ceil(cell.size().width)) }
+    // A table too wide for the column closes up its gaps, then sets its text smaller, down to 11 pt, before it breaks any word.
+    let room = style.width - style.right - table.left
+    let gaps = CGFloat(max(widths.count - 1, 0))
+    let gap = widths.reduce(0, +) + 24 * gaps <= room ? 24.0 : 12.0
+    let wordRoom = room - gap * gaps
+    let longest = words.reduce(0, +)
+
+    if longest > wordRoom, wordRoom > 0 {
+      let scale = max(wordRoom / longest, 11 / style.font.pointSize)
+      table.rows = table.rows.map { row in (identity: row.identity, isHeader: row.isHeader, cells: row.cells.mapValues { scaled($0, by: scale) }) }
+      (widths, words) = measure(table)
     }
 
-    widths = fit(widths, into: style.width - style.right - table.left - gap * CGFloat(max(widths.count - 1, 0)))
+    widths = fit(widths, minimums: words, into: wordRoom)
     var starts: [CGFloat] = []
     var next = table.left
 
@@ -339,33 +348,86 @@ enum Markdown {
       // A rule under every row but the last keeps wrapped rows apart.
       if !isLast { decoration.rule = .below }
 
-      return Paragraph(content: content, base: [.paragraphStyle: style, .decoration: DecorationValue(decoration), .font: TranscriptStyle.font, .fitsColumn: true])
+      // The row's number keeps two identical rows from reading as one run.
+      let copy = "\(index)\u{1F}" + table.columns.indices.map { row.cells[$0]?.string.replacingOccurrences(of: "\u{2028}", with: " ") ?? "" }.joined(separator: "\t")
+
+      return Paragraph(content: content, base: [.paragraphStyle: style, .decoration: DecorationValue(decoration), .font: TranscriptStyle.font, .fitsColumn: true, .copyText: copy])
     }
   }
 
-  /// Column widths that add up to at most `available`. Columns narrower than an even share keep their width,
-  /// and the others split what is left evenly, but none goes under 40 pt.
-  static func fit(_ widths: [CGFloat], into available: CGFloat) -> [CGFloat] {
+  /// Column widths that add up to at most `available`, so no column is cut off. Every column is narrowed to one level
+  /// and no further than its longest word (or 40 pt, without `minimums`), so the widest columns give up room first and words stay whole.
+  /// When even the longest words do not fit, each column gets a share in proportion to its longest word, and words break.
+  static func fit(_ widths: [CGFloat], minimums: [CGFloat]? = nil, into available: CGFloat) -> [CGFloat] {
     guard widths.reduce(0, +) > available else { return widths }
 
-    var fitted = widths
-    var wide = Set(widths.indices)
-    var budget = available
+    let floors = zip(widths, minimums ?? widths.map { _ in 40 }).map { min($0, $1) }
+    let floorSum = floors.reduce(0, +)
 
-    while true {
-      let share = budget / CGFloat(wide.count)
-      let narrow = wide.filter { widths[$0] <= share }
+    guard floorSum < available else { return floors.map { floor($0 * max(available, 0) / max(floorSum, 1)) } }
 
-      if narrow.isEmpty {
-        for column in wide { fitted[column] = max(floor(share), 40) }
+    func total(at level: CGFloat) -> CGFloat { zip(widths, floors).reduce(0) { $0 + min(max(level, $1.1), $1.0) } }
 
-        return fitted
-      }
+    var low = 0.0
+    var high = widths.max() ?? 0
 
-      for column in narrow { budget -= widths[column] }
+    for _ in 0..<40 {
+      let level = (low + high) / 2
 
-      wide.subtract(narrow)
+      if total(at: level) > available { high = level } else { low = level }
     }
+
+    // The search ends a hair under the level, which flooring would turn into a whole point less.
+    let level = (low * 100).rounded() / 100
+
+    return zip(widths, floors).map { floor(min(max(level, $0.1), $0.0)) }
+  }
+
+  /// Each column's widest cell, and its longest word.
+  private static func measure(_ table: Table) -> (widths: [CGFloat], words: [CGFloat]) {
+    var widths = [CGFloat](repeating: 0, count: table.columns.count)
+    var words = widths
+
+    for row in table.rows {
+      for (column, cell) in row.cells where column < widths.count {
+        widths[column] = max(widths[column], ceil(cell.size().width))
+        words[column] = max(words[column], longestWord(cell))
+      }
+    }
+
+    return (widths, words)
+  }
+
+  /// A cell with every font, inline code's too, made `scale` times its size.
+  private static func scaled(_ cell: NSAttributedString, by scale: CGFloat) -> NSAttributedString {
+    let result = NSMutableAttributedString(attributedString: cell)
+
+    result.enumerateAttribute(.font, in: NSRange(location: 0, length: result.length)) { value, range, _ in
+      guard let font = value as? NSFont else { return }
+
+      result.addAttribute(.font, value: NSFont(descriptor: font.fontDescriptor, size: floor(font.pointSize * scale * 2) / 2) ?? font, range: range)
+    }
+
+    return result
+  }
+
+  /// The width of a cell's widest run of text between spaces, the narrowest its column can be without breaking a word.
+  /// A long path or URL counts for at most 160 pt, so one cell can't take the whole table.
+  private static func longestWord(_ cell: NSAttributedString) -> CGFloat {
+    let string = cell.string as NSString
+    var widest = 0.0
+    var location = 0
+
+    while location < string.length {
+      let space = string.rangeOfCharacter(from: .whitespacesAndNewlines, options: [], range: NSRange(location: location, length: string.length - location))
+      let end = space.location == NSNotFound ? string.length : space.location
+
+      if end > location { widest = max(widest, ceil(cell.attributedSubstring(from: NSRange(location: location, length: end - location)).size().width)) }
+
+      location = end + max(space.length, 1)
+    }
+
+    return min(widest, 160)
   }
 
   /// A cell's lines when it wraps at `width`: at a line separator, between words, or inside a word too long for a line.
@@ -412,14 +474,37 @@ enum Markdown {
     return result
   }
 
+  /// A line of plain text with its backtick spans set as inline code, as the desktop app shows them in a prompt.
+  static func codeSpans(_ text: String, font: NSFont, color: NSColor) -> NSAttributedString {
+    let plain: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+    let result = NSMutableAttributedString()
+    var rest = text[...]
+
+    while let match = rest.firstMatch(of: /`([^`]+)`/) {
+      result.append(NSAttributedString(string: String(rest[..<match.range.lowerBound]), attributes: plain))
+
+      // Kerning after the character before the span and after its last character makes room for the chip's padding.
+      if result.length > 0 { result.addAttribute(.kern, value: Decoration.chipPadding, range: NSRange(location: result.length - 1, length: 1)) }
+
+      let span = NSMutableAttributedString(string: String(match.1), attributes: [.font: NSFont.monospacedSystemFont(ofSize: font.pointSize - 1.5, weight: .regular), .foregroundColor: color, .inlineCode: true])
+      span.addAttribute(.kern, value: Decoration.chipPadding, range: NSRange(location: span.length - 1, length: 1))
+      result.append(span)
+      rest = rest[match.range.upperBound...]
+    }
+
+    result.append(NSAttributedString(string: String(rest), attributes: plain))
+    return result
+  }
+
   private static func inline(_ parsed: AttributedString, runs: [AttributedString.Runs.Run], font: NSFont, color: NSColor) -> NSMutableAttributedString {
     let result = NSMutableAttributedString()
 
     for run in runs {
       let intent = run.inlinePresentationIntent ?? []
-      // A hard break stays inside its paragraph as a line separator.
+      // A hard break stays inside its paragraph as a line separator. So does a soft one, as in the desktop app:
+      // a reply's single newlines are its line breaks, in poems, addresses and lines of right-to-left text.
       let source = String(parsed[run.range].characters)
-      let text = intent.contains(.lineBreak) ? "\u{2028}" : intent.contains(.code) ? source : curled(source, after: result.string.last)
+      let text = intent.contains(.lineBreak) || intent.contains(.softBreak) ? "\u{2028}" : intent.contains(.code) ? source : curled(source, after: result.string.last)
       var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
       var traits = font.fontDescriptor.symbolicTraits
 
@@ -427,7 +512,10 @@ enum Markdown {
 
       if intent.contains(.emphasized) { traits.insert(.italic) }
 
-      if intent.contains(.code), !text.isEmpty {
+      // A code span that is a file's absolute path reads as a link to the file, as in the desktop app. A folder's path ends in a slash and stays code.
+      let path = intent.contains(.code) && text.wholeMatch(of: /~?\/\S+[^\/]/) != nil ? URL(filePath: (text as NSString).expandingTildeInPath) : nil
+
+      if intent.contains(.code), !text.isEmpty, path == nil {
         attributes[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize - 1.5, weight: traits.contains(.bold) ? .semibold : .regular)
         attributes[.inlineCode] = true
 
@@ -439,12 +527,24 @@ enum Markdown {
         result.append(span)
         continue
       } else if traits != font.fontDescriptor.symbolicTraits {
-        attributes[.font] = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: font.pointSize) ?? font
+        // Strong text is semibold, as in the desktop app; the bold trait itself would draw it heavier.
+        var styled = traits.contains(.bold) ? NSFont.systemFont(ofSize: font.pointSize, weight: .semibold) : font
+
+        if traits.contains(.italic) { styled = NSFontManager.shared.convert(styled, toHaveTrait: .italicFontMask) }
+
+        attributes[.font] = styled
       }
 
       if intent.contains(.strikethrough) { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
 
-      if let link = run.link ?? run.imageURL { attributes[.link] = link }
+      if let link = run.link ?? run.imageURL ?? path {
+        // Web links are blue and links to files gray, each with a fainter underline of its color, as in the desktop app.
+        let color = ["http", "https"].contains(link.scheme) ? NSColor.linkColor : NSColor.secondaryLabelColor
+        attributes[.link] = link
+        attributes[.foregroundColor] = color
+        attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        attributes[.underlineColor] = color.withAlphaComponent(0.5)
+      }
 
       result.append(NSAttributedString(string: text, attributes: attributes))
     }

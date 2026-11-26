@@ -42,6 +42,13 @@ struct TranscriptBuilderTests {
     let desktop: JSONValue = ["recap": "Done.", "ask": "Commit?", "actions": [["label": "Commit", "action": "commit"]]]
     let desktopFrames = [prompt("Go"), call("t1", "mcp__ccd_turn__update_plan", ["items": []]), returned("t1", "ok"), call("t2", "mcp__ccd_turn__wrap_up", desktop), returned("t2", "ok"), finished()]
     #expect(shapes(try transcript(desktopFrames)) == ["prompt(Go)", "next(Done. | Commit? [\"Commit\"])", "footer(1m 52s)"])
+
+    let unlabeled: JSONValue = ["recap": "Done.", "ask": "Commit?", "actions": [["action": "commit"], ["action": "archive"]]]
+    #expect(shapes(try transcript([prompt("Go"), call("t1", "mcp__ccd_turn__wrap_up", unlabeled), returned("t1", "ok"), finished()])).contains("next(Done. | Commit? [\"Commit changes\"])"))
+
+    // The desktop app draws no box for a recap alone; Theseus's own recap is the turn's summary, so it keeps its card.
+    #expect(!shapes(try transcript([prompt("Go"), call("t1", "mcp__ccd_turn__wrap_up", ["recap": "Done."]), returned("t1", "ok"), finished()])).contains { $0.hasPrefix("next(") })
+    #expect(shapes(try transcript([prompt("Go"), call("t1", wrapUpToolName, ["recap": "Done."]), returned("t1", "ok"), finished()])).contains("next(Done. |  [])"))
   }
 
   @Test func onlyTheLastTurnShowsItsRecap() throws {
@@ -204,16 +211,16 @@ struct TranscriptBuilderTests {
     #expect(builder.elements(for: TranscriptInput(transcript: transcript, isLive: true)).map(\.shape) == ["prompt(Go)", "group(Ran a command, read a)"])
   }
 
-  @Test func taskListFollowsTheRunningTurnsFirstBlock() throws {
+  @Test func taskListEndsTheRunningTurn() throws {
     let frames = [prompt("Go"), said("Planning."), call("k1", "TaskCreate", ["subject": "Write tests"]), returned("k1", "ok", output: ["task": ["id": "1", "subject": "Write tests"]])]
     let running = try transcript(frames)
     var builder = makeBuilder()
     let tasks = TaskList(running).tasks
 
     #expect(tasks.count == 1)
-    #expect(builder.elements(for: TranscriptInput(transcript: running, tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "reply(Planning.)", "tasks(1)", "tool(Added task Write tests)"])
-    #expect(builder.elements(for: TranscriptInput(transcript: try transcript(frames + [finished()]), tasks: tasks, isLive: true)).map(\.shape).contains("tasks(1)") == false)
-    #expect(builder.elements(for: TranscriptInput(transcript: running, tasks: tasks)).map(\.shape).contains("tasks(1)") == false)
+    #expect(builder.elements(for: TranscriptInput(transcript: running, tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "reply(Planning.)", "tool(Added task Write tests)", "tasks(pending Write tests)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: try transcript(frames + [finished()]), tasks: tasks, isLive: true)).map(\.shape).contains("tasks(pending Write tests)") == false)
+    #expect(builder.elements(for: TranscriptInput(transcript: running, tasks: tasks)).map(\.shape).contains("tasks(pending Write tests)") == false)
   }
 
   @Test func taskListShowsBeforeTheTurnHasAnythingElse() throws {
@@ -221,8 +228,57 @@ struct TranscriptBuilderTests {
     var builder = makeBuilder()
     let bare = try transcript([prompt("Go")])
 
-    #expect(builder.elements(for: TranscriptInput(transcript: bare, tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "tasks(1)"])
-    #expect(builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go"), thought("")]), tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "tasks(1)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: bare, tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "tasks(pending Write tests)"])
+    #expect(builder.elements(for: TranscriptInput(transcript: try transcript([prompt("Go"), thought("")]), tasks: tasks, isLive: true)).map(\.shape) == ["prompt(Go)", "tasks(pending Write tests)"])
+  }
+
+  @Test func desktopPlanWaitsOnTheAgentsItsStepStarted() throws {
+    let steps: JSONValue = ["items": [["content": "Spawn", "status": "in_progress"], ["content": "Sum up", "status": "pending"]]]
+    let frames = [prompt("Go"), call("p1", "mcp__ccd_turn__update_plan", steps), returned("p1", "Plan shown"), call("a1", "Agent", ["description": "Scan"]), returned("a1", "launched", output: ["status": "async_launched", "agentId": "x1"]), said("Started.")]
+    var builder = makeBuilder()
+    let shapes = { (frames: [JSONValue]) in builder.elements(for: TranscriptInput(transcript: try transcript(frames), isLive: true)).map(\.shape) }
+
+    #expect(try shapes(frames).suffix(2) == ["reply(Started.)", "tasks(running Spawn, pending Sum up)"])
+    #expect(try shapes(frames + [finished()]).contains("tasks(waiting Spawn (1 subagent working), pending Sum up)"))
+
+    // A later turn that leaves the plan alone ends without the card.
+    let later = frames + [finished(), prompt("<task-notification>waiting</task-notification>", at: "10:01:00", origin: "task_notification"), said("Still waiting."), finished()]
+    #expect(try shapes(later).last == "status(1 subagent working)")
+
+    // Once the step that started the agent is done, the card goes and the agent shows under the transcript.
+    let advanced = frames + [call("p2", "mcp__ccd_turn__update_plan", ["advance": true]), returned("p2", "Plan updated"), finished()]
+    #expect(try shapes(advanced).last == "status(1 subagent working)")
+    #expect(try !shapes(advanced).contains { $0.hasPrefix("tasks(") })
+  }
+
+  @Test func subagentHandBackReadsAsAMessageFromIt() throws {
+    let message = "Another Claude session sent a message:\n<agent-message from=\"x1\">\n[Subagent hand-back] The text below is the final report. The report follows:\n  Found two files.\n</agent-message>\n\nThat other session is a subagent."
+    let frames = [prompt("Go"), call("a1", "Agent", ["description": "Scan"]), returned("a1", "launched", output: ["status": "async_launched", "agentId": "x1"]), finished(), prompt(message, at: "10:01:00", origin: "peer"), said("Both done."), finished()]
+    var builder = makeBuilder()
+    builder.toggle("1/prompt")
+    let elements = builder.elements(for: TranscriptInput(transcript: try transcript(frames)))
+
+    #expect(elements.map(\.shape).contains("tool(Message from subagent Scan)"))
+    #expect(elements.contains { $0.kind == .detail([.report("Found two files.")]) })
+  }
+
+  @Test func subagentMessagesFoldWithTheCallsAroundThem() throws {
+    func handBack(_ agent: String) -> String { "<agent-message from=\"\(agent)\">\n[Subagent hand-back] The report follows:\n  Done.\n</agent-message>" }
+    func notice(_ agent: String, _ name: String) -> String { "<task-notification>\n<task-id>\(agent)</task-id>\n<summary>Agent \"\(name)\" finished</summary>\n<usage><duration_ms>240934</duration_ms></usage>\n</task-notification>" }
+    let frames = [
+      prompt("Go"),
+      call("a1", "Agent", ["description": "Scan"]), returned("a1", "launched", output: ["status": "async_launched", "agentId": "x1"]),
+      call("a2", "Agent", ["description": "Seed"]), returned("a2", "launched", output: ["status": "async_launched", "agentId": "x2"]), finished(),
+      prompt(handBack("x1"), at: "10:01:00", origin: "peer"), prompt(notice("x1", "Scan"), at: "10:01:01", origin: "task_notification"), said("Scan is done."), finished(),
+      prompt(handBack("x2"), at: "10:02:00", origin: "peer"), call("b1", "Bash", ["command": "ls"]), returned("b1", "a"),
+      prompt(notice("x2", "Seed"), at: "10:02:01", origin: "task_notification"), call("b2", "Bash", ["command": "pwd"]), returned("b2", "/"), said("Both done."), finished()
+    ]
+    var builder = makeBuilder()
+    let shown = builder.elements(for: TranscriptInput(transcript: try transcript(frames))).map(\.shape)
+
+    #expect(shown.contains("tool(Message from subagent Scan)"))
+    #expect(shown.contains("tool(Background subagent completed \u{B7} Scan \u{B7} took 4m 1s)"))
+    #expect(shown.contains("group(Received a message, ran 2 commands, finished a background subagent)"))
   }
 
   @Test func unansweredCallInAnEndedTurnIsStopped() throws {
@@ -280,7 +336,7 @@ struct TranscriptBuilderTests {
 
     guard case .tool(let row) = elements[1].kind else { return #expect(Bool(false), "The agent's row is missing") }
 
-    #expect(row.verb == "Ran agent" && row.target == "Scan the repo")
+    #expect(row.verb == "Ran subagent" && row.target == "Scan the repo")
     #expect(row.note == "Explore \u{B7} 12 tool uses \u{B7} 34.5k tokens")
     #expect(elements[2].kind == .detail([.report("Found two files")]))
   }
@@ -373,7 +429,7 @@ struct TranscriptBuilderTests {
       call("r2", "Read", ["file_path": "/tmp/b.swift"]), returned("r2", "b")
     ]))
 
-    #expect(shown == ["prompt(Go)", "group(Ran a command, read menubar.png, ran a skill)", "reply(Next.)", "group(Edited a file, read a file)"])
+    #expect(shown == ["prompt(Go)", "group(Ran a command, read menubar.png, ran skill)", "reply(Next.)", "group(Edited a file, read a file)"])
   }
 
   @Test func imageResultsBecomeThumbnails() throws {
@@ -384,5 +440,22 @@ struct TranscriptBuilderTests {
 
     guard case .group(let group) = elements.last?.kind else { return #expect(Bool(false), "The group is missing") }
     #expect(group.thumbnails.map(\.id) == ["t1/0"])
+  }
+
+  @Test func reviewIsACardAndItsOutcomesMarkIt() throws {
+    let first: JSONValue = ["level": "high", "findings": [["file": "Ext/Write.swift", "line": 40, "summary": "Long.", "short_summary": "Throws", "severity": "important"], ["file": "App/Library.swift", "short_summary": "Slow", "severity": "nit"]]]
+    let second: JSONValue = ["level": "high", "findings": [["file": "Ext/Write.swift", "line": 40, "summary": "Long.", "short_summary": "Throws", "severity": "important", "outcome": "fixed"], ["file": "App/Library.swift", "short_summary": "Slow", "severity": "nit", "outcome": "skipped"]]]
+    let shown = shapes(try transcript([
+      prompt("Review"),
+      call("b1", "Bash", ["command": "git log"]), returned("b1", "a"),
+      call("f1", "ReportFindings", first), returned("f1", "2 findings reported."),
+      finished(),
+      prompt("Fix it", at: "10:05:00"),
+      call("f2", "ReportFindings", second), returned("f2", "2 findings reported.")
+    ]))
+
+    #expect(shown.contains("tool(Ran a command)"))
+    #expect(shown.contains("review(High effort, 2 findings: important fixed Throws, nit skipped Slow)"))
+    #expect(shown.contains("group(Code review 1 fixed, 1 skipped)"))
   }
 }

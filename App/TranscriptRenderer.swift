@@ -35,7 +35,7 @@ struct TranscriptRenderer {
       paragraphs[paragraphs.count - 1].restyle { $0.paragraphSpacing += 8 }
 
       for index in paragraphs.indices {
-        paragraphs[index].decoration.box = Decoration.Box(isFirst: slot.isFirst && index == 0, isLast: slot.isLast && index == paragraphs.count - 1, topGap: slot.isFirst && index == 0 ? element.spacing : 0, hasDivider: isRow && !slot.isFirst && index == 0)
+        paragraphs[index].decoration.box = Decoration.Box(isFirst: slot.isFirst && index == 0, isLast: slot.isLast && index == paragraphs.count - 1, topGap: slot.isFirst && index == 0 ? element.spacing : 0, hasDivider: (isRow && !slot.isFirst && index == 0) || paragraphs[index].decoration.box?.hasDivider == true)
       }
     }
 
@@ -86,7 +86,14 @@ struct TranscriptRenderer {
         return [line(content, toggle: group.id)]
       }
 
-      for part in group.summary { content.append(part.isTarget ? TranscriptStyle.text(part.text) : NSAttributedString(string: part.text, attributes: secondary)) }
+      content.append(NSAttributedString(string: group.summary, attributes: secondary))
+
+      // A file named last reads as a row's target does.
+      if !group.file.isEmpty {
+        let length = (group.file as NSString).length
+        content.addAttribute(.foregroundColor, value: NSColor.labelColor, range: NSRange(location: content.length - length, length: length))
+        content.addAttribute(.kern, value: targetGap, range: NSRange(location: content.length - length - 1, length: 1))
+      }
 
       content.append(delta(added: group.added, removed: group.removed))
       content.append(chevron(isOpen: group.isExpanded))
@@ -120,6 +127,10 @@ struct TranscriptRenderer {
       return paragraphs
     case .image(let image):
       return [line(NSAttributedString(attachment: picture(image, columnWidth)))]
+    case .review(let card):
+      return review(card, inset: inset)
+    case .status(let text):
+      return [line(NSAttributedString(string: text, attributes: secondary))]
     case .ask(let text, let isExpanded):
       let content = NSMutableAttributedString(attributedString: TranscriptStyle.text(text))
       content.append(chevron(isOpen: isExpanded))
@@ -139,8 +150,8 @@ struct TranscriptRenderer {
 
   /// A prompt's lines share one rounded fill that hugs the column's right edge. Each line is a paragraph, drawn as a slice of the fill.
   private func bubble(_ text: String) -> [Paragraph] {
-    let lines = text.components(separatedBy: "\n")
-    let width = lines.map { TranscriptStyle.text($0).size().width }.max() ?? 0
+    let lines = text.components(separatedBy: "\n").map { Markdown.codeSpans($0, font: TranscriptStyle.font, color: .labelColor) }
+    let width = lines.map { $0.size().width }.max() ?? 0
     let indent = TranscriptStyle.bubbleIndent(textWidth: width, columnWidth: columnWidth)
     let padding = Decoration.Fill.bubble.padding
     let lineSpacing = 4.0
@@ -151,7 +162,7 @@ struct TranscriptRenderer {
       // TextKit 2 puts the line spacing above each line, the first included.
       let style = TranscriptStyle.paragraph(before: isFirst ? padding - lineSpacing : 0, after: isLast ? padding : 0, indent: indent, tail: Decoration.bubbleInset, lineSpacing: lineSpacing)
       let decoration = Decoration(fill: .bubble, roundsTop: isFirst, roundsBottom: isLast)
-      return Paragraph(content: TranscriptStyle.text(text), base: [.paragraphStyle: style, .decoration: DecorationValue(decoration), .bubbleWidth: width, .font: TranscriptStyle.font, .foregroundColor: NSColor.labelColor])
+      return Paragraph(content: text, base: [.paragraphStyle: style, .decoration: DecorationValue(decoration), .bubbleWidth: width, .font: TranscriptStyle.font, .foregroundColor: NSColor.labelColor])
     }
   }
 
@@ -166,7 +177,10 @@ struct TranscriptRenderer {
 
     content.append(NSAttributedString(string: row.verb, attributes: secondary))
 
+    // The desktop app sets what a row acted on a little apart from its verb.
     if !row.target.isEmpty { content.append(TranscriptStyle.text(" " + row.target)) }
+
+    if !row.target.isEmpty { content.addAttribute(.kern, value: targetGap, range: NSRange(location: content.length - (row.target as NSString).length - 1, length: 1)) }
 
     if !row.note.isEmpty { content.append(NSAttributedString(string: "  " + row.note, attributes: secondary)) }
 
@@ -179,17 +193,97 @@ struct TranscriptRenderer {
 
     if row.state == .stopped { content.append(NSAttributedString(string: "  Stopped", attributes: secondary)) }
 
-    content.append(chevron(isOpen: row.isExpanded))
+    if row.opens { content.append(chevron(isOpen: row.isExpanded)) }
 
-    var paragraph = thumbnails(row.thumbnails, after: content, inset: inset, toggle: row.id)
+    var paragraph = thumbnails(row.thumbnails, after: content, inset: inset, toggle: row.opens ? row.id : nil)
 
     if !row.tooltip.isEmpty { paragraph.base[.toolTip] = row.tooltip }
 
     return paragraph
   }
 
+  /// "Code review High effort, 6 findings" over the findings grouped by file. A finding is a badge, its title and a chevron, and opens to its full text.
+  private func review(_ card: ReviewCard, inset: CGFloat) -> [Paragraph] {
+    let font = NSFont.systemFont(ofSize: 14)
+    let header = NSMutableAttributedString(attributedString: TranscriptStyle.text("Code review", font: font))
+    header.append(TranscriptStyle.text(" " + card.heading, font: font, color: .secondaryLabelColor))
+    var paragraphs = [line(header, indent: inset)]
+    let badges = card.findings.map(badge)
+    let badgeStart = inset + 22
+    let textStart = badgeStart + max(48, badges.map { ceil($0?.size().width ?? 0) }.max() ?? 0) + 14
+    var files: [String] = []
+
+    paragraphs[0].restyle { $0.paragraphSpacingBefore += 4; $0.paragraphSpacing = 10 }
+
+    for finding in card.findings where !files.contains(finding.file) { files.append(finding.file) }
+
+    for file in files {
+      var heading = line(TranscriptStyle.text(file, font: font, color: .secondaryLabelColor), indent: inset)
+      heading.restyle { $0.paragraphSpacingBefore = paragraphs.count == 1 ? 10 : 16 }
+
+      if paragraphs.count == 1 { heading.decoration.box = Decoration.Box(hasDivider: true) }
+
+      paragraphs.append(heading)
+
+      for (index, finding) in card.findings.enumerated() where finding.file == file {
+        let content = NSMutableAttributedString()
+        let color: NSColor = finding.outcome == "fixed" ? .tertiaryLabelColor : .labelColor
+
+        if let badge = badges[index] { content.append(badge) }
+
+        content.append(TranscriptStyle.text("\t" + finding.title + "\t", font: font, color: color))
+        content.append(TranscriptStyle.symbol(finding.isExpanded ? "chevron.down" : "chevron.right", pointSize: 9, weight: .semibold, in: font))
+
+        var row = line(content, indent: badgeStart, toggle: finding.id)
+        row.restyle {
+          $0.headIndent = textStart
+          $0.tailIndent = -(inset + 6)
+          $0.paragraphSpacingBefore = 10
+          $0.tabStops = [NSTextTab(textAlignment: .left, location: textStart), NSTextTab(textAlignment: .right, location: columnWidth - inset - 8)]
+        }
+        row.base[.fitsColumn] = true
+        paragraphs.append(row)
+        guard finding.isExpanded, !finding.detail.isEmpty else { continue }
+
+        var detail = Markdown.paragraphs(finding.detail, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), color: .secondaryLabelColor, lineSpacing: 3, left: textStart, right: inset + 6, width: columnWidth))
+        detail[0].restyle { $0.paragraphSpacingBefore += 6 }
+        paragraphs += detail
+      }
+    }
+
+    return paragraphs
+  }
+
+  /// "Fixed" in green once a finding is fixed, otherwise its severity: "Important" in orange, "Nit" or "Pre-existing" in gray, on a rounded chip.
+  private func badge(_ finding: ReviewFinding) -> NSAttributedString? {
+    var text: String
+    var color = NSColor.secondaryLabelColor
+    var fill = NSColor.quaternarySystemFill
+
+    switch (finding.outcome, finding.severity) {
+    case ("fixed", _):
+      text = "Fixed"
+      color = .systemGreen
+      fill = color.withAlphaComponent(0.15)
+    case (_, "important"):
+      text = "Important"
+      color = .systemOrange
+      fill = color.withAlphaComponent(0.15)
+    case (_, "nit"):
+      text = "Nit"
+    case (_, "pre_existing"):
+      text = "Pre-existing"
+    default:
+      return nil
+    }
+
+    let badge = NSMutableAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: color, .inlineCode: fill])
+    badge.addAttribute(.kern, value: Decoration.chipPadding, range: NSRange(location: badge.length - 1, length: 1))
+    return badge
+  }
+
   /// A row's line with the images its calls returned at the column's right edge.
-  private func thumbnails(_ thumbnails: [Thumbnail], after content: NSMutableAttributedString, inset: CGFloat, toggle: String) -> Paragraph {
+  private func thumbnails(_ thumbnails: [Thumbnail], after content: NSMutableAttributedString, inset: CGFloat, toggle: String?) -> Paragraph {
     guard !thumbnails.isEmpty else { return line(content, indent: inset, toggle: toggle) }
 
     let gap = NSAttributedString(string: " ", attributes: secondary)
@@ -334,3 +428,6 @@ struct TranscriptRenderer {
     }
   }
 }
+
+/// The room between a row's verb and what it acted on, past the space between them.
+private let targetGap: CGFloat = 3

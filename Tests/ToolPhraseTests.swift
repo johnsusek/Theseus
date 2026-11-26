@@ -23,6 +23,9 @@ struct ToolPhraseTests {
   @Test func descriptionsTakeTheRowsTense() {
     #expect(conjugated("List project folder contents", isRunning: false) == "Listed project folder contents")
     #expect(conjugated("List project folder contents", isRunning: true) == "Listing project folder contents")
+    #expect(conjugated("Quit keeping windows, relaunch, list restored windows", isRunning: false) == "Quit keeping windows, relaunch, list restored windows")
+    #expect(conjugated("Quit the app", isRunning: true) == "Quitting the app")
+    #expect(["Open the transcript", "Strengthen the instruction and build"].map { conjugated($0, isRunning: false) } == ["Open the transcript", "Strengthen the instruction and build"])
     #expect(["Run the tests", "Stop the server", "Create a file", "Copy notes", "Commit it", "Show status"].map { conjugated($0, isRunning: false) } == ["Ran the tests", "Stopped the server", "Created a file", "Copied notes", "Committed it", "Showed status"])
     #expect(["Run the tests", "Stop the server", "Create a file", "Tie it", "Open it"].map { conjugated($0, isRunning: true) } == ["Running the tests", "Stopping the server", "Creating a file", "Tying it", "Opening it"])
     #expect(conjugated("Checking status", isRunning: false) == "Checking status")
@@ -44,9 +47,11 @@ struct ToolPhraseTests {
   }
 
   @Test func summaryCountsEachKindOfCall() {
-    #expect(toolSummary([("Read", "a.swift"), ("Read", "b.swift"), ("Bash", "swift test")]).map(\.text).joined() == "Read 2 files, ran a command")
-    #expect(toolSummary([("Edit", "a.swift"), ("Grep", "TODO"), ("Glob", "*.swift"), ("MultiEdit", "b.swift")]).map(\.text).joined() == "Made 2 edits, ran 2 searches")
-    #expect(toolSummary([("Write", "notes.md"), ("mcp__SafariPilot__click", "")]) == [SummaryPart(text: "Created a file"), SummaryPart(text: ", used SafariPilot click")])
-    #expect(toolSummary([("WebFetch", "example.com")]) == [SummaryPart(text: "Fetched "), SummaryPart(text: "example.com", isTarget: true)])
+    #expect(toolSummary([("Read", "/a.swift"), ("Read", "/b.swift"), ("Bash", "swift test")]) == "Read 2 files, ran a command")
+    #expect(toolSummary([("Edit", "/a.swift"), ("Grep", "TODO"), ("Glob", "*.swift"), ("MultiEdit", "/b.swift"), ("Edit", "/a.swift")]) == "Edited 2 files, ran 2 searches")
+    #expect(toolSummary([("Write", "/notes.md"), ("mcp__SafariPilot__click", "")]) == "Created notes.md, used SafariPilot click")
+    #expect(toolSummary([("Write", "/axd/main.swift"), ("Bash", ""), ("Read", "/shots/00s.png")]) == "Created a file, ran a command, read a file")
+    #expect(toolSummary([("WebFetch", "example.com")]) == "Fetched example.com")
+    #expect(toolSummary([("Bash", ""), ("Read", "/tmp/x/out.txt"), ("Skill", "code-review")]) == "Ran a command, read out.txt, ran skill")
   }
 }
