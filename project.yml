@@ -11,12 +11,12 @@ settings:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "26.0"
     ENABLE_HARDENED_RUNTIME: YES
-    MARKETING_VERSION: "0.1"
+    MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
 packages:
   ClaudeEngine:
     url: https://github.com/johnsusek/ClaudeEngine
-    branch: main
+    exactVersion: 0.1.0
   Highlightr:
     url: https://github.com/raspu/Highlightr
     from: 2.2.0

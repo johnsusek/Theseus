@@ -19,8 +19,12 @@ The app talks to the CLI through [ClaudeEngine](https://github.com/johnsusek/Cla
 ## Requirements
 
 - macOS 26 or later
-- Xcode 26 or later and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
 - Claude Code installed and logged in, with `claude` on your login shell's PATH
+- To build: Xcode 26 or later and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+
+## Download
+
+Get the notarized DMG from the [latest release](https://github.com/johnsusek/Theseus/releases/latest) and drag Theseus to Applications.
 
 ## Build
 
