@@ -23,6 +23,8 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private var generation = 0
   private weak var watchedGroup: NSWindowTabGroup?
   private var groupWatch: NSKeyValueObservation?
+  /// Whether the sidebar's observation is running. A tab behind another lets it end and starts it again when it comes forward.
+  private var watchesSidebar = false
   /// When the session last went from idle to busy, which the activity timer counts from until the turn has a date.
   private var busySince: Date?
   private var agentsPopover: NSPopover?
@@ -87,12 +89,13 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     content.startPage.onOpen = { [unowned self] picked in openFromStartPage(picked) }
+    // The sidebar keeps focus in the tab it brings forward, as a source list does after a click.
     split.sidebar.onOpen = { [unowned self] picked in
-      if content.showsStartPage { return openFromStartPage(picked) }
+      if content.showsStartPage { openFromStartPage(picked) } else { app.showConversation(picked) }
 
-      app.showConversation(picked)
+      app.conversation(for: picked)?.split.sidebar.focus()
     }
-    keepCurrent(self) { $0.refreshSidebar() }
+    watchSidebar()
     content.startPage.history.outline.onEscape = { [unowned self] in toggleHistory(nil) }
     // The empty transcript would show its own scroller beside the start page's.
     content.showsStartPage = existing == nil
@@ -453,9 +456,22 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
   private var projectSessions: [Session] { app.workspace.projects.first { $0.path.standardizedFileURL.path == project.path }?.sessions ?? [] }
 
-  /// The sidebar lists every session the start page would, and this tab's own.
+  private func watchSidebar() {
+    guard !watchesSidebar else { return }
+
+    watchesSidebar = true
+    keepCurrent(self) { $0.refreshSidebar() }
+  }
+
+  /// The sidebar lists the project's sessions as the sidebar style says, subsessions under their parent. A tab behind another reads
+  /// nothing, which ends its observation, so only the tab on screen keeps its sidebar current.
   private func refreshSidebar() {
-    split.sidebar.show(sessionListOrder(projectSessions).sessions)
+    if let window, !window.isMainWindow, let selected = window.tabGroup?.selectedWindow, selected !== window {
+      watchesSidebar = false
+      return
+    }
+
+    split.sidebar.show(projectSessions.filter { $0.parent == nil }, style: SidebarSettings.shared.style)
   }
 
   /// A session picked on the start page takes this tab's place, unless it is open in another tab or a draft is typed here.
@@ -694,6 +710,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   // MARK: Window
 
   func windowDidBecomeMain(_ notification: Notification) {
+    watchSidebar()
     windowActiveChanged()
     markReadIfShown()
   }

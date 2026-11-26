@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let sessionMenus = SessionMenuDelegate()
   private var projectPanel: NSOpenPanel?
   private var projects: ProjectsWindowController?
+  private lazy var sidebarConfiguration = SidebarConfigurationController()
 
   /// A headless check passes a workspace that runs a stand-in CLI and keeps its records elsewhere.
   init(workspace: Workspace = Workspace(recordsDirectory: URL.applicationSupportDirectory.appending(path: "Theseus"))) {
@@ -174,6 +175,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     projects = controller
     controller.showWindow(sender)
     rescan()
+  }
+
+  /// View > Sidebar Configuration.
+  @objc func showSidebarConfiguration(_ sender: Any?) {
+    sidebarConfiguration.showWindow(sender)
   }
 
   func conversation(for session: Session) -> ConversationController? { conversations.first { $0.session === session } }

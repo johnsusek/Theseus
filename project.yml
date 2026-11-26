@@ -76,6 +76,7 @@ targets:
       - path: App/CodeHighlighter.swift
       - path: App/PermissionPrompt.swift
       - path: App/ProjectsModel.swift
+      - path: App/SidebarModel.swift
       - path: App/StatusModel.swift
       - path: App/StorageDiff.swift
       - path: App/ToolPhrases.swift
