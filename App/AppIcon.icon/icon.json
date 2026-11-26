@@ -1,6 +1,6 @@
 {
   "fill" : {
-    "automatic-gradient" : "srgb:0.10600,0.10600,0.10600,1.00000"
+    "solid" : "srgb:0.10600,0.10600,0.10600,1.00000"
   },
   "groups" : [
     {
@@ -14,6 +14,13 @@
         }
       ],
       "lighting" : "individual",
+      "position" : {
+        "scale" : 1.28,
+        "translation-in-points" : [
+          0,
+          0
+        ]
+      },
       "refractivity" : {
         "depth" : 0,
         "enabled" : false,
