@@ -2,9 +2,24 @@ import AppKit
 import ClaudeWorkspace
 
 /// Return opens the selected session, or opens or closes the selected day. Esc leaves the history.
+/// Rows run edge to edge with the chevron near the left edge, and sessions line up with their day instead of indenting under it.
 final class HistoryOutlineView: NSOutlineView {
   var onReturn: () -> Void = {}
   var onEscape: () -> Void = {}
+  private let titleInset = 28.0
+
+  override func frameOfOutlineCell(atRow row: Int) -> NSRect {
+    var frame = super.frameOfOutlineCell(atRow: row)
+    frame.origin.x = 8
+    return frame
+  }
+
+  override func frameOfCell(atColumn column: Int, row: Int) -> NSRect {
+    let frame = super.frameOfCell(atColumn: column, row: row)
+    guard column == 0 else { return frame }
+
+    return NSRect(x: titleInset, y: frame.minY, width: frame.maxX - titleInset, height: frame.height)
+  }
 
   override func keyDown(with event: NSEvent) {
     // Return and Enter.
