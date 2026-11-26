@@ -8,6 +8,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private let project: URL
   private unowned let app: AppDelegate
   private let content = ConversationView()
+  private lazy var split = ConversationSplitController(content: content)
   private let tabStatus = TabStatusView()
   private(set) var session: Session?
   private var starting: Task<Session, any Error>?
@@ -50,7 +51,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   init(app: AppDelegate, project: URL, session existing: Session? = nil) {
     self.app = app
     self.project = project
-    let window = ConversationWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 520), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+    let window = ConversationWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 520), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
     super.init(window: window)
 
     window.titlebarAppearsTransparent = true
@@ -63,7 +64,9 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     window.tabbingIdentifier = project.path
     window.tab.accessoryView = tabStatus
     window.representedURL = project
-    window.contentView = content
+    // A content view controller sizes the window to its view, so the view starts at the window's size.
+    split.view.frame = NSRect(origin: .zero, size: window.contentRect(forFrameRect: window.frame).size)
+    window.contentViewController = split
     window.initialFirstResponder = content.prompt.textView
     window.delegate = self
 
@@ -85,6 +88,12 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     content.startPage.onOpen = { [unowned self] picked in openFromStartPage(picked) }
+    split.sidebar.onOpen = { [unowned self] picked in
+      if content.showsStartPage { return openFromStartPage(picked) }
+
+      app.showConversation(picked)
+    }
+    keepCurrent(self) { $0.refreshSidebar() }
     content.startPage.history.outline.onEscape = { [unowned self] in toggleHistory(nil) }
     // The empty transcript would show its own scroller beside the start page's.
     content.showsStartPage = existing == nil
@@ -217,6 +226,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
 
     retitle()
     markReadIfShown()
+    split.sidebar.current = session
 
     // A conversation is worth restoring by its id once it has a turn; before that a relaunch gives a blank one.
     let restorableId = session.transcript.turns.isEmpty ? nil : session.id
@@ -434,18 +444,19 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     let page = content.startPage
     guard !page.isHidden else { return }
 
-    let sessions = app.workspace.projects.first { $0.path.standardizedFileURL.path == project.path }?.sessions ?? []
+    let sessions = projectSessions
 
     if page.showsHistory { return page.history.show(sessions) }
 
-    let others = sessions.filter { $0 !== session }.sorted { $0.lastActive > $1.lastActive }
-    let waiting = others.filter { $0.rowStatus == .waiting }
-    let running = others.filter { $0.rowStatus == .running }
-    let unread = others.filter { $0.isUnread && !$0.isArchived && $0.rowStatus != .waiting && $0.rowStatus != .running }
-    let listed = Set((waiting + running + unread).map(ObjectIdentifier.init))
-    let recent = others.filter { !listed.contains(ObjectIdentifier($0)) && ProjectsQuery().shows($0, now: .now) }
+    let order = sessionListOrder(sessions.filter { $0 !== session })
+    page.show(order.sessions, leading: order.leading)
+  }
 
-    page.show(waiting + running + unread + recent, leading: listed.count)
+  private var projectSessions: [Session] { app.workspace.projects.first { $0.path.standardizedFileURL.path == project.path }?.sessions ?? [] }
+
+  /// The sidebar lists every session the start page would, and this tab's own.
+  private func refreshSidebar() {
+    split.sidebar.show(sessionListOrder(projectSessions).sessions)
   }
 
   /// A session picked on the start page takes this tab's place, unless it is open in another tab or a draft is typed here.

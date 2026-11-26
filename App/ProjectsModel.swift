@@ -110,6 +110,22 @@ extension Session {
     live?.respond(to: request, with: .answer([question.question: label], to: request))
   }
 
+  /// What the session is doing or asks, else the first line of how its last turn closed, as plain text.
+  var detailText: String {
+    let activity = activityText
+
+    guard activity.isEmpty, let closing else { return activity }
+
+    let line = closing.split(whereSeparator: \.isNewline).first { !$0.allSatisfy(\.isWhitespace) }.map(String.init) ?? ""
+    return (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map { String($0.characters) } ?? line
+  }
+
+  /// "2 hr. ago", "Yesterday": when the session was last active.
+  var lastActiveText: String {
+    let relative = lastActive.formatted(.relative(presentation: .named, unitsStyle: .abbreviated))
+    return relative.prefix(1).capitalized + relative.dropFirst()
+  }
+
   /// The title, else the first prompt, cut to one line.
   var rowTitle: String {
     let source = title ?? transcript.turns.lazy.compactMap { $0.prompt?.text }.first ?? ""
@@ -264,6 +280,19 @@ struct ProjectsQuery {
 
     return (pinned.sessions.isEmpty ? [] : [pinned]) + folders
   }
+}
+
+/// The start page's and the sidebar's order: waiting sessions, then running ones, then unread ones, each newest first, then the rest newest first.
+/// `leading` counts the first three groups.
+@MainActor
+func sessionListOrder(_ sessions: [Session]) -> (sessions: [Session], leading: Int) {
+  let newest = sessions.sorted { $0.lastActive > $1.lastActive }
+  let waiting = newest.filter { $0.rowStatus == .waiting }
+  let running = newest.filter { $0.rowStatus == .running }
+  let unread = newest.filter { $0.isUnread && !$0.isArchived && $0.rowStatus != .waiting && $0.rowStatus != .running }
+  let listed = Set((waiting + running + unread).map(ObjectIdentifier.init))
+  let recent = newest.filter { !listed.contains(ObjectIdentifier($0)) && ProjectsQuery().shows($0, now: .now) }
+  return (waiting + running + unread + recent, listed.count)
 }
 
 /// "2 waiting, 1 failed, 1 running", or empty when none of the sessions is live.

@@ -105,6 +105,8 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
       ])
     ]),
     menu("View", [
+      item("Show Sidebar", #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]),
+      .separator(),
       item("Show Agents", #selector(ConversationController.showAgents(_:)), "a", [.command, .control]),
       item("Show Changes", #selector(ConversationController.showChanges(_:)), "c", [.command, .control]),
       item("Show Verbose Transcript", #selector(ConversationController.toggleVerboseTranscript(_:))),
