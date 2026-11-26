@@ -1,6 +1,22 @@
 import AppKit
 import ClaudeWorkspace
 
+/// Safari's start page colors in dark mode. Light mode keeps the system colors.
+extension NSColor {
+  static let pillFill = startPage(dark: 0x656565, light: .tertiarySystemFill)
+  static let pillHover = startPage(dark: 0x6f6f6f, light: .secondarySystemFill)
+  static let pillPressed = startPage(dark: 0x7a7a7a, light: .systemFill)
+  static let pillTitle = startPage(dark: 0xefefef, light: .labelColor)
+  static let pillDetail = startPage(dark: 0xd8d8d8, light: .labelColor.withAlphaComponent(0.8))
+  static let startHeading = startPage(dark: 0xededed, light: .labelColor)
+  static let startLink = startPage(dark: 0x0091ff, light: .linkColor)
+
+  private static func startPage(dark hex: Int, light: NSColor) -> NSColor {
+    let dark = NSColor(srgbRed: CGFloat(hex >> 16 & 0xff) / 255, green: CGFloat(hex >> 8 & 0xff) / 255, blue: CGFloat(hex & 0xff) / 255, alpha: 1)
+    return NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
+  }
+}
+
 /// A session on the start page: a rounded button with its status mark, its title, what it is doing or asks under the title
 /// (else how its last turn closed), the controls that answer a request, and when it was last active.
 final class SessionPill: NSButton {
@@ -8,11 +24,11 @@ final class SessionPill: NSButton {
   static let height = 48.0
   let session: Session
   private let mark = RowStatusMark()
-  private let titleLabel = cellLabel()
-  private let detail = cellLabel(.labelColor.withAlphaComponent(0.8), truncation: .byWordWrapping)
+  private let titleLabel = cellLabel(.pillTitle)
+  private let detail = cellLabel(.pillDetail, truncation: .byWordWrapping)
   /// The Activity column's cell without its text: Deny and Allow, Answer, or Review.
   private let answers = ActivityCellView()
-  private let date = cellLabel(.secondaryLabelColor)
+  private let date = cellLabel(.pillDetail)
   /// Holds the title and the detail under it, centered in the pill.
   private let text = NSLayoutGuide()
   private lazy var alone = titleLabel.bottomAnchor.constraint(equalTo: text.bottomAnchor)
@@ -119,11 +135,11 @@ final class SessionPill: NSButton {
     let fill: NSColor
 
     if isHighlighted {
-      fill = .systemFill
+      fill = .pillPressed
     } else if isHovered {
-      fill = .secondarySystemFill
+      fill = .pillHover
     } else {
-      fill = .tertiarySystemFill
+      fill = .pillFill
     }
 
     fill.setFill()
@@ -145,12 +161,15 @@ final class SessionPill: NSButton {
   }
 }
 
-/// Session pills two to a row, as tall as each other. Each session keeps its pill, so a pill whose session moves slides to its new place.
+/// Session pills two to a row, three once the grid is wide enough, each row's pills as tall as each other. Each session keeps its pill, so a pill whose session moves slides to its new place.
 final class PillGrid: NSView {
   static let spacing = 10.0
+  /// The least width that takes three columns.
+  static let threeColumnWidth = 900.0
   var onOpen: (Session) -> Void = { _ in }
   private(set) var pills: [SessionPill] = []
   private var placement: [NSLayoutConstraint] = []
+  private var columns = 2
 
   override var isFlipped: Bool { true }
 
@@ -205,32 +224,39 @@ final class PillGrid: NSView {
     }
   }
 
-  /// Pins each row under the one before; the right pill of a row shares the left one's top and bottom.
+  override func layout() {
+    super.layout()
+    let wanted = bounds.width >= Self.threeColumnWidth ? 3 : 2
+
+    if wanted != columns {
+      columns = wanted
+      place()
+    }
+  }
+
+  /// Pins each row under the one before; the other pills of a row share its first pill's top and bottom.
   private func place() {
     NSLayoutConstraint.deactivate(placement)
     placement = []
     var above = topAnchor
     var gap = 0.0
+    let count = CGFloat(columns)
 
-    for index in stride(from: 0, to: pills.count, by: 2) {
-      let left = pills[index]
-      placement += [
-        left.topAnchor.constraint(equalTo: above, constant: gap),
-        left.leadingAnchor.constraint(equalTo: leadingAnchor),
-        left.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.5, constant: -Self.spacing / 2)
-      ]
+    for index in stride(from: 0, to: pills.count, by: columns) {
+      let row = pills[index..<min(index + columns, pills.count)]
+      let first = pills[index]
+      placement.append(first.topAnchor.constraint(equalTo: above, constant: gap))
 
-      if index + 1 < pills.count {
-        let right = pills[index + 1]
+      for (column, pill) in row.enumerated() {
         placement += [
-          right.topAnchor.constraint(equalTo: left.topAnchor),
-          right.bottomAnchor.constraint(equalTo: left.bottomAnchor),
-          right.trailingAnchor.constraint(equalTo: trailingAnchor),
-          right.widthAnchor.constraint(equalTo: left.widthAnchor)
+          pill.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 1 / count, constant: -Self.spacing * (count - 1) / count),
+          column == 0 ? pill.leadingAnchor.constraint(equalTo: leadingAnchor) : pill.leadingAnchor.constraint(equalTo: pills[index + column - 1].trailingAnchor, constant: Self.spacing)
         ]
+
+        if column > 0 { placement += [pill.topAnchor.constraint(equalTo: first.topAnchor), pill.bottomAnchor.constraint(equalTo: first.bottomAnchor)] }
       }
 
-      above = left.bottomAnchor
+      above = first.bottomAnchor
       gap = Self.spacing
     }
 
@@ -289,7 +315,7 @@ final class StartPageView: NSView {
     grid.translatesAutoresizingMaskIntoConstraints = false
 
     showAll.isBordered = false
-    showAll.contentTintColor = .linkColor
+    showAll.contentTintColor = .startLink
     showAll.font = .systemFont(ofSize: 13)
     showAll.imagePosition = .imageTrailing
     showAll.target = self
@@ -316,7 +342,7 @@ final class StartPageView: NSView {
     historyPane.setViews([historyHeading, history], in: .top)
     historyPane.isHidden = true
 
-    // Below the window's own size priorities, or the 720 pt cap on the page would cap the window too.
+    // Below the window's own size priorities, or the cap on the page's width would cap the window too.
     let fill = page.widthAnchor.constraint(equalTo: document.widthAnchor, constant: -48)
     fill.priority = .dragThatCannotResizeWindow
 
@@ -338,7 +364,7 @@ final class StartPageView: NSView {
       page.topAnchor.constraint(equalTo: document.topAnchor, constant: 24),
       page.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -24),
       page.centerXAnchor.constraint(equalTo: document.centerXAnchor),
-      page.widthAnchor.constraint(lessThanOrEqualToConstant: 720),
+      page.widthAnchor.constraint(lessThanOrEqualToConstant: 1040),
       fill,
       sessionsHeading.widthAnchor.constraint(equalTo: page.widthAnchor),
       grid.widthAnchor.constraint(equalTo: page.widthAnchor),
@@ -378,6 +404,7 @@ final class StartPageView: NSView {
   private func headingRow(_ title: String, trailing: NSView) -> NSStackView {
     let heading = NSTextField(labelWithString: title)
     heading.font = .systemFont(ofSize: 22, weight: .bold)
+    heading.textColor = .startHeading
     let row = NSStackView()
     row.alignment = .centerY
     row.setViews([heading], in: .leading)
@@ -389,7 +416,7 @@ final class StartPageView: NSView {
   private func linkButton(_ title: String) -> NSButton {
     let button = NSButton(title: title, target: nil, action: #selector(ConversationController.toggleHistory(_:)))
     button.isBordered = false
-    button.contentTintColor = .linkColor
+    button.contentTintColor = .startLink
     button.font = .systemFont(ofSize: 13)
     return button
   }
