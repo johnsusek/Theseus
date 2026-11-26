@@ -123,7 +123,8 @@ struct TranscriptRenderer {
         paragraphs.append(reply)
       }
 
-      paragraphs[paragraphs.count - 1].restyle { $0.paragraphSpacing += 4 }
+      // A call with no questions has nothing to space.
+      if !paragraphs.isEmpty { paragraphs[paragraphs.count - 1].restyle { $0.paragraphSpacing += 4 } }
       return paragraphs
     case .image(let image):
       return [line(NSAttributedString(attachment: picture(image, columnWidth)))]
@@ -246,7 +247,8 @@ struct TranscriptRenderer {
         guard finding.isExpanded, !finding.detail.isEmpty else { continue }
 
         var detail = Markdown.paragraphs(finding.detail, style: MarkdownStyle(font: NSFont.systemFont(ofSize: 13), color: .secondaryLabelColor, lineSpacing: 3, left: textStart, right: inset + 6, width: columnWidth))
-        detail[0].restyle { $0.paragraphSpacingBefore += 6 }
+        // Blank or whitespace-only text parses to no paragraphs.
+        if !detail.isEmpty { detail[0].restyle { $0.paragraphSpacingBefore += 6 } }
         paragraphs += detail
       }
     }

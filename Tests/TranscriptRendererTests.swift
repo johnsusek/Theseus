@@ -12,6 +12,12 @@ struct TranscriptRendererTests {
     #expect(renderer.attributedString(for: TranscriptElement(id: "b", kind: .reply("```"))).length == 0)
   }
 
+  @Test func blankFindingsAndEmptyQuestionsRender() {
+    let finding = ReviewFinding(id: "r/0", file: "a.swift", title: "Blank", detail: "\n\n", isExpanded: true)
+    #expect(renderer.attributedString(for: TranscriptElement(id: "r", kind: .review(ReviewCard(heading: "1 finding", findings: [finding])))).length > 0)
+    _ = renderer.attributedString(for: TranscriptElement(id: "q", kind: .question([])))
+  }
+
   @Test func promptIsABubbleThatHugsTheRightEdge() {
     let text = renderer.attributedString(for: TranscriptElement(id: "p", kind: .prompt("Short\n\nprompt"), spacing: 22))
     let decorations = [0, 6, 7].map { (text.attribute(.decoration, at: $0, effectiveRange: nil) as? DecorationValue)?.decoration }
