@@ -21,15 +21,6 @@ final class TranscriptView: NSView {
     }
   }
 
-  /// Space kept clear above the first line, for the see-through title bar over the top edge.
-  var topInset = 0.0 {
-    didSet {
-      guard topInset != oldValue else { return }
-
-      scrollView.contentInsets.top = topInset
-    }
-  }
-
   /// Space kept clear under the last line, for the prompt field floating over the bottom edge.
   var bottomInset = 0.0 {
     didSet {
@@ -357,7 +348,7 @@ final class TranscriptView: NSView {
 
     let inView = frame.offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
 
-    if inView.minY < scrollView.contentView.bounds.minY + topInset { textView.scroll(NSPoint(x: 0, y: inView.minY - 8 - topInset)) }
+    if inView.minY < scrollView.contentView.bounds.minY { textView.scroll(NSPoint(x: 0, y: inView.minY - 8)) }
   }
 
   private func scrollToBottom() {
