@@ -127,7 +127,7 @@ private final class SidebarCell: NSTableCellView {
 
     NSLayoutConstraint.activate([
       mark.leadingAnchor.constraint(equalTo: leadingAnchor, constant: -2),
-      mark.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+      mark.centerYAnchor.constraint(equalTo: centerYAnchor),
       title.leadingAnchor.constraint(equalTo: mark.trailingAnchor, constant: 2),
       title.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
       title.bottomAnchor.constraint(equalTo: centerYAnchor, constant: 1),
