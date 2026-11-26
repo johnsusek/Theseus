@@ -9,7 +9,7 @@ final class SessionPill: NSButton {
   let session: Session
   private let mark = RowStatusMark()
   private let titleLabel = cellLabel()
-  private let detail = cellLabel(.labelColor.withAlphaComponent(0.65), truncation: .byWordWrapping)
+  private let detail = cellLabel(.labelColor.withAlphaComponent(0.8), truncation: .byWordWrapping)
   /// The Activity column's cell without its text: Deny and Allow, Answer, or Review.
   private let answers = ActivityCellView()
   private let date = cellLabel(.secondaryLabelColor)
@@ -145,11 +145,112 @@ final class SessionPill: NSButton {
   }
 }
 
-/// A blank conversation's page: this project's sessions that wait on you, run or are unread, and its recent ones.
+/// Session pills two to a row, as tall as each other. Each session keeps its pill, so a pill whose session moves slides to its new place.
+final class PillGrid: NSView {
+  static let spacing = 10.0
+  var onOpen: (Session) -> Void = { _ in }
+  private(set) var pills: [SessionPill] = []
+  private var placement: [NSLayoutConstraint] = []
+
+  override var isFlipped: Bool { true }
+
+  /// Shows a pill for each session in order. On screen, kept pills slide to their places, new ones fade in and gone ones fade out.
+  func show(_ sessions: [Session]) {
+    let old = Dictionary(uniqueKeysWithValues: pills.map { ($0.session.id, $0) })
+    let before = old.mapValues(\.frame)
+    let listed = Set(sessions.map(\.id))
+    let gone = pills.filter { !listed.contains($0.session.id) }
+
+    // A gone pill holds its place while it fades.
+    for pill in gone { pill.translatesAutoresizingMaskIntoConstraints = true }
+
+    pills = sessions.map { session in
+      if let pill = old[session.id] {
+        pill.update()
+        return pill
+      }
+
+      let pill = SessionPill(session)
+      pill.target = self
+      pill.action = #selector(openPill(_:))
+      addSubview(pill)
+      return pill
+    }
+    place()
+
+    guard let content = window?.contentView, !before.isEmpty else {
+      for pill in gone { pill.removeFromSuperview() }
+      return
+    }
+
+    content.layoutSubtreeIfNeeded()
+    let moves = pills.compactMap { pill in before[pill.session.id].map { (pill: pill, from: $0, to: pill.frame) } }
+    let added = pills.filter { before[$0.session.id] == nil }
+
+    for move in moves { move.pill.frame = move.from }
+
+    for pill in added { pill.alphaValue = 0 }
+
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = 0.3
+      context.allowsImplicitAnimation = true
+
+      for move in moves { move.pill.animator().frame = move.to }
+
+      for pill in added { pill.animator().alphaValue = 1 }
+
+      for pill in gone { pill.animator().alphaValue = 0 }
+    } completionHandler: {
+      for pill in gone { pill.removeFromSuperview() }
+    }
+  }
+
+  /// Pins each row under the one before; the right pill of a row shares the left one's top and bottom.
+  private func place() {
+    NSLayoutConstraint.deactivate(placement)
+    placement = []
+    var above = topAnchor
+    var gap = 0.0
+
+    for index in stride(from: 0, to: pills.count, by: 2) {
+      let left = pills[index]
+      placement += [
+        left.topAnchor.constraint(equalTo: above, constant: gap),
+        left.leadingAnchor.constraint(equalTo: leadingAnchor),
+        left.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.5, constant: -Self.spacing / 2)
+      ]
+
+      if index + 1 < pills.count {
+        let right = pills[index + 1]
+        placement += [
+          right.topAnchor.constraint(equalTo: left.topAnchor),
+          right.bottomAnchor.constraint(equalTo: left.bottomAnchor),
+          right.trailingAnchor.constraint(equalTo: trailingAnchor),
+          right.widthAnchor.constraint(equalTo: left.widthAnchor)
+        ]
+      }
+
+      above = left.bottomAnchor
+      gap = Self.spacing
+    }
+
+    placement.append(bottomAnchor.constraint(equalTo: above))
+    NSLayoutConstraint.activate(placement)
+  }
+
+  @objc private func openPill(_ sender: SessionPill) {
+    onOpen(sender.session)
+  }
+}
+
+/// A blank conversation's page: this project's sessions, those that wait on you, run or are unread first.
 /// See History swaps it for every session in the project.
 final class StartPageView: NSView {
   var onOpen: (Session) -> Void = { _ in } {
-    didSet { history.onOpen = onOpen }
+    didSet {
+      grid.onOpen = onOpen
+      history.onOpen = onOpen
+    }
   }
   let history = HistoryView()
   var showsHistory = false {
@@ -161,17 +262,15 @@ final class StartPageView: NSView {
   private let startScroll = NSScrollView()
   private let historyPane = NSStackView()
   private let page = NSStackView()
-  /// Waiting, running and unread sessions, two to a row.
-  private let list = NSStackView()
-  private let recentList = NSStackView()
+  private let grid = PillGrid()
   private let viewMore = NSButton(title: "View More", target: nil, action: nil)
-  /// The sessions last shown, kept for View More. The recent list shows the first `recentLimit` of `recent`.
+  /// The sessions last shown, kept for View More.
   private var sessions: [Session] = []
-  private var recent: [Session] = []
-  private var recentLimit = 6
-  private var pills: [SessionPill] = []
-  /// The ids of the sessions in each list.
-  private var shown: [[String]]?
+  /// How many sessions lead the list and always show.
+  private var leading = 0
+  private var limit = 6
+  /// The ids of the sessions shown.
+  private var shown: [String]?
 
   init() {
     super.init(frame: .zero)
@@ -187,20 +286,15 @@ final class StartPageView: NSView {
     startScroll.drawsBackground = false
     startScroll.hasVerticalScroller = true
     startScroll.autohidesScrollers = true
+    grid.translatesAutoresizingMaskIntoConstraints = false
 
-    for stack in [list, recentList] {
-      stack.orientation = .vertical
-      stack.spacing = 10
-    }
-
-    let recentHeading = headingRow("Recent Sessions", trailing: linkButton("See History"))
+    let sessionsHeading = headingRow("Sessions", trailing: linkButton("See History"))
     viewMore.isBordered = false
     viewMore.contentTintColor = .linkColor
     viewMore.font = .systemFont(ofSize: 14)
     viewMore.target = self
-    viewMore.action = #selector(showMoreRecent(_:))
-    page.setViews([heading("Sessions"), list, recentHeading, recentList, viewMore], in: .top)
-    page.setCustomSpacing(32, after: list)
+    viewMore.action = #selector(showMore(_:))
+    page.setViews([sessionsHeading, grid, viewMore], in: .top)
 
     let search = NSSearchField()
     search.placeholderString = "Search History"
@@ -212,9 +306,9 @@ final class StartPageView: NSView {
     trailing.spacing = 16
     let historyHeading = headingRow("History", trailing: trailing)
     historyPane.orientation = .vertical
-    historyPane.alignment = .leading
+    historyPane.alignment = .centerX
     historyPane.spacing = 10
-    historyPane.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 0, right: 24)
+    historyPane.edgeInsets = NSEdgeInsets(top: 24, left: 0, bottom: 0, right: 0)
     historyPane.setViews([historyHeading, history], in: .top)
     historyPane.isHidden = true
 
@@ -242,37 +336,32 @@ final class StartPageView: NSView {
       page.centerXAnchor.constraint(equalTo: document.centerXAnchor),
       page.widthAnchor.constraint(lessThanOrEqualToConstant: 720),
       fill,
-      list.widthAnchor.constraint(equalTo: page.widthAnchor),
-      // Two rows of pills, so Recent Sessions starts in the same place however many sessions there are.
-      list.heightAnchor.constraint(greaterThanOrEqualToConstant: SessionPill.height * 2 + list.spacing),
-      recentHeading.widthAnchor.constraint(equalTo: page.widthAnchor),
-      recentList.widthAnchor.constraint(equalTo: page.widthAnchor),
+      sessionsHeading.widthAnchor.constraint(equalTo: page.widthAnchor),
+      grid.widthAnchor.constraint(equalTo: page.widthAnchor),
       historyHeading.widthAnchor.constraint(equalTo: historyPane.widthAnchor, constant: -48),
-      history.widthAnchor.constraint(equalTo: historyPane.widthAnchor, constant: -48)
+      history.widthAnchor.constraint(equalTo: historyPane.widthAnchor)
     ])
-    show(sessions: [], recent: [])
+    show([], leading: 0)
   }
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("StartPageView is built in code") }
 
-  /// Rebuilds the pills when their sessions changed and otherwise updates them. `recent` is newest first; the list shows six more with each View More.
-  func show(sessions: [Session], recent: [Session]) {
+  /// Shows the first `leading` sessions and, after them, enough of the rest to reach the limit, which each View More raises by six.
+  func show(_ sessions: [Session], leading: Int) {
     self.sessions = sessions
-    self.recent = recent
-    let shownRecent = Array(recent.prefix(recentLimit))
-    let ids = [sessions.map(\.id), shownRecent.map(\.id)]
-    viewMore.isHidden = recent.count <= recentLimit
+    self.leading = leading
+    let visible = Array(sessions.prefix(max(limit, leading)))
+    let ids = visible.map(\.id)
+    viewMore.isHidden = sessions.count <= visible.count
 
     if ids == shown {
-      for pill in pills { pill.update() }
+      for pill in grid.pills { pill.update() }
       return
     }
 
     shown = ids
-    pills = []
-    fill(list, with: sessions)
-    fill(recentList, with: shownRecent)
+    grid.show(visible)
   }
 
   /// The session a pill's or a history row's control belongs to.
@@ -280,39 +369,12 @@ final class StartPageView: NSView {
     sequence(first: control, next: \.superview).lazy.compactMap { ($0 as? SessionPill)?.session }.first ?? history.session(for: control)
   }
 
-  /// Puts a pill for each session in `stack`, two to a row, as tall as each other.
-  private func fill(_ stack: NSStackView, with sessions: [Session]) {
-    let made = sessions.map(SessionPill.init)
-    pills += made
-
-    for pill in made {
-      pill.target = self
-      pill.action = #selector(openPill(_:))
-    }
-
-    let rows = stride(from: 0, to: made.count, by: 2).map { index in
-      let row = NSStackView(views: [made[index], index + 1 < made.count ? made[index + 1] : NSView()])
-      row.distribution = .fillEqually
-      row.spacing = 10
-
-      if index + 1 < made.count { made[index].heightAnchor.constraint(equalTo: made[index + 1].heightAnchor).isActive = true }
-
-      return row
-    }
-    stack.setViews(rows, in: .top)
-    NSLayoutConstraint.activate(rows.map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor) })
-  }
-
-  private func heading(_ title: String) -> NSTextField {
+  private func headingRow(_ title: String, trailing: NSView) -> NSStackView {
     let heading = NSTextField(labelWithString: title)
     heading.font = .systemFont(ofSize: 22, weight: .bold)
-    return heading
-  }
-
-  private func headingRow(_ title: String, trailing: NSView) -> NSStackView {
     let row = NSStackView()
     row.alignment = .centerY
-    row.setViews([heading(title)], in: .leading)
+    row.setViews([heading], in: .leading)
     row.setViews([trailing], in: .trailing)
     return row
   }
@@ -326,17 +388,13 @@ final class StartPageView: NSView {
     return button
   }
 
-  @objc private func showMoreRecent(_ sender: Any?) {
-    recentLimit += 6
-    show(sessions: sessions, recent: recent)
+  @objc private func showMore(_ sender: Any?) {
+    limit += 6
+    show(sessions, leading: leading)
   }
 
   @objc private func searchHistory(_ sender: NSSearchField) {
     history.search = sender.stringValue
-  }
-
-  @objc private func openPill(_ sender: SessionPill) {
-    onOpen(sender.session)
   }
 }
 

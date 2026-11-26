@@ -429,7 +429,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     }
   }
 
-  /// Waiting sessions, then running ones, then unread ones, each newest first, and the rest as recent ones; or every session in the history.
+  /// Waiting sessions, then running ones, then unread ones, each newest first, then the rest newest first; or every session in the history.
   private func refreshStartPage() {
     let page = content.startPage
     guard !page.isHidden else { return }
@@ -445,7 +445,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     let listed = Set((waiting + running + unread).map(ObjectIdentifier.init))
     let recent = others.filter { !listed.contains(ObjectIdentifier($0)) && ProjectsQuery().shows($0, now: .now) }
 
-    page.show(sessions: waiting + running + unread, recent: recent)
+    page.show(waiting + running + unread + recent, leading: listed.count)
   }
 
   /// A session picked on the start page takes this tab's place, unless it is open in another tab or a draft is typed here.
