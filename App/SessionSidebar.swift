@@ -24,6 +24,8 @@ final class SessionSidebar: NSViewController, NSOutlineViewDataSource, NSOutline
   private var headers: [String: SidebarHeader] = [:]
   /// Parents the user closed; every other parent opens when the rows are rebuilt.
   private var collapsed: Set<String> = []
+  /// Lines each row's response fills at the sidebar's width, as its cell last measured.
+  private var responseFills: [ObjectIdentifier: Int] = [:]
   private var isReloading = false
 
   override func loadView() {
@@ -89,9 +91,10 @@ final class SessionSidebar: NSViewController, NSOutlineViewDataSource, NSOutline
       for row in 0..<outline.numberOfRows {
         guard let session = outline.item(atRow: row) as? Session else { continue }
 
-        (outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarCell)?.show(session, style: style)
+        let fill = responseFills[ObjectIdentifier(session)]
+        (outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarCell)?.show(session, style: style, responseFill: fill)
 
-        if outline.rect(ofRow: row).height != SidebarCell.height(for: style, session: session) { resized.insert(row) }
+        if outline.rect(ofRow: row).height != SidebarCell.height(for: style, session: session, responseFill: fill) { resized.insert(row) }
       }
 
       guard !resized.isEmpty else { return }
@@ -186,7 +189,11 @@ final class SessionSidebar: NSViewController, NSOutlineViewDataSource, NSOutline
 
   func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool { item is Session }
 
-  func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat { item is SidebarHeader ? 26 : (item as? Session).map { SidebarCell.height(for: style, session: $0) } ?? 0 }
+  func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+    guard let session = item as? Session else { return item is SidebarHeader ? 26 : 0 }
+
+    return SidebarCell.height(for: style, session: session, responseFill: responseFills[ObjectIdentifier(session)])
+  }
 
   func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
     if let header = item as? SidebarHeader {
@@ -198,8 +205,27 @@ final class SessionSidebar: NSViewController, NSOutlineViewDataSource, NSOutline
     guard let session = item as? Session else { return nil }
 
     let cell = outlineView.makeView(withIdentifier: SidebarCell.identifier, owner: nil) as? SidebarCell ?? SidebarCell()
-    cell.show(session, style: style)
+    cell.onMeasure = { [unowned self] in measured($0, lines: $1) }
+    cell.show(session, style: style, responseFill: responseFills[ObjectIdentifier(session)])
     return cell
+  }
+
+  /// A cell found its response fills a different number of lines than its row has room for, so the row's height changes after this pass.
+  private func measured(_ session: Session, lines: Int) {
+    responseFills[ObjectIdentifier(session)] = lines
+
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+
+      let row = outline.row(forItem: session)
+
+      guard row >= 0 else { return }
+
+      NSAnimationContext.runAnimationGroup { context in
+        context.duration = 0
+        outline.noteHeightOfRows(withIndexesChanged: [row])
+      }
+    }
   }
 
   func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? { item is Session ? SidebarRowView(separators: !style.compact) : nil }
@@ -314,6 +340,8 @@ private final class SidebarCell: NSTableCellView {
     return cache
   }()
   let title = sidebarLabel()
+  /// The status dot, a tinted view over the title's indented first line: a label draws a text attachment in its text color.
+  private let dot = NSImageView()
   private let worktree = NSImageView()
   private let date = sidebarLabel(.secondaryLabelColor)
   private let prompt = sidebarLabel(.secondaryLabelColor)
@@ -321,8 +349,12 @@ private final class SidebarCell: NSTableCellView {
   private let detail = sidebarLabel(.secondaryLabelColor)
   private var style = SidebarStyle()
   private var session: Session?
+  /// Lines the response fills at this cell's width, when measured.
+  private var responseFill: Int?
+  /// Reports the lines the response wraps to, so the row can drop the ones it doesn't fill.
+  var onMeasure: (Session, Int) -> Void = { _, _ in }
 
-  /// The title carries an inline status dot, so its attributed text is rebuilt in the selection's colors.
+  /// The title and its status dot take the selection's colors.
   override var backgroundStyle: NSView.BackgroundStyle {
     didSet { showTitle() }
   }
@@ -336,7 +368,7 @@ private final class SidebarCell: NSTableCellView {
     worktree.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
     worktree.contentTintColor = .tertiaryLabelColor
 
-    for view in [title, worktree, date, prompt, preview, detail] { addSubview(view) }
+    for view in [title, dot, worktree, date, prompt, preview, detail] { addSubview(view) }
   }
 
   @available(*, unavailable)
@@ -357,9 +389,27 @@ private final class SidebarCell: NSTableCellView {
   }
 
   /// The lines of text each part takes: title, prompt, response, tasks; zero for a part the style hides or the session has nothing for.
-  private static func lineCounts(_ style: SidebarStyle, session: Session) -> [Int] {
-    let hasResponse = (style.showsActivity && !session.activityText.isEmpty) || session.closing?.contains(where: { !$0.isWhitespace }) == true
-    return [style.titleLines, style.showsPrompt && !promptText(session).isEmpty ? 1 : 0, style.showsResponse && hasResponse ? style.responseLines : 0, style.showsTasks && session.tasksTotal > 0 ? 1 : 0]
+  /// The response takes the lines `responseFill` says it wraps to, up to the style's count.
+  private static func lineCounts(_ style: SidebarStyle, session: Session, responseFill: Int?) -> [Int] {
+    let response = style.showsResponse && !previewText(style, session: session).isEmpty ? min(style.responseLines, responseFill ?? style.responseLines) : 0
+    return [style.titleLines, style.showsPrompt && !promptText(session).isEmpty ? 1 : 0, response, style.showsTasks && session.tasksTotal > 0 ? 1 : 0]
+  }
+
+  /// What the session is doing, else its closing text on one line without Markdown.
+  private static func previewText(_ style: SidebarStyle, session: Session) -> String {
+    if style.showsActivity, !session.activityText.isEmpty { return session.activityText }
+
+    guard let closing = session.closing else { return "" }
+
+    let source = String(closing.prefix(600)) as NSString
+
+    if let cached = previews.object(forKey: source) { return cached as String }
+
+    let lines = (source as String).split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces).trimmingPrefix(while: { $0 == "#" }) }
+    let joined = lines.joined(separator: " ")
+    let text = (try? AttributedString(markdown: joined, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map { String($0.characters) } ?? joined
+    previews.setObject(text as NSString, forKey: source)
+    return text
   }
 
   /// The last prompt on one line, empty for an untitled session, whose title is its prompt already.
@@ -369,8 +419,8 @@ private final class SidebarCell: NSTableCellView {
     return session.lastPrompt?.split(whereSeparator: \.isNewline).joined(separator: " ") ?? ""
   }
 
-  static func height(for style: SidebarStyle, session: Session) -> Double {
-    let counts = lineCounts(style, session: session).filter { $0 > 0 }
+  static func height(for style: SidebarStyle, session: Session, responseFill: Int?) -> Double {
+    let counts = lineCounts(style, session: session, responseFill: responseFill).filter { $0 > 0 }
     return 2 * style.padding + Double(counts.reduce(0, +)) * lineHeight(style) + 2 * Double(counts.count - 1)
   }
 
@@ -380,7 +430,7 @@ private final class SidebarCell: NSTableCellView {
     guard let session else { return }
 
     let lineHeight = Self.lineHeight(style)
-    let counts = Self.lineCounts(style, session: session)
+    let counts = Self.lineCounts(style, session: session, responseFill: responseFill)
     let leading = 2.0
     let trailing = bounds.width - 4
     var top = style.padding
@@ -390,6 +440,10 @@ private final class SidebarCell: NSTableCellView {
 
     date.frame = NSRect(x: trailing - dateWidth, y: top, width: dateWidth, height: lineHeight)
     title.frame = NSRect(x: leading, y: top, width: max(0, titleWidth), height: Double(style.titleLines) * lineHeight)
+    let font = title.font ?? .systemFont(ofSize: style.textPoints)
+    let baseline = top + (lineHeight - font.ascender + font.descender) / 2 + font.ascender
+    let dotSize = dot.image?.size ?? .zero
+    dot.frame = NSRect(x: leading, y: round(baseline - font.capHeight / 2 - dotSize.height / 2), width: dotSize.width, height: dotSize.height)
     worktree.frame = NSRect(x: title.frame.maxX + 3, y: top + (lineHeight - 12) / 2, width: 12, height: 12)
     top += title.frame.height + 2
 
@@ -397,27 +451,25 @@ private final class SidebarCell: NSTableCellView {
       label.frame = NSRect(x: leading, y: top, width: max(0, trailing - leading), height: Double(count) * lineHeight)
       top += label.frame.height + 2
     }
+
+    guard !preview.isHidden, style.responseLines > 1, let cell = preview.cell else { return }
+
+    let needed = cell.cellSize(forBounds: NSRect(x: 0, y: 0, width: preview.frame.width, height: .greatestFiniteMagnitude)).height
+    let lines = min(style.responseLines, max(1, Int((needed / lineHeight).rounded())))
+
+    guard lines != responseFill ?? style.responseLines else { return }
+
+    responseFill = lines
+    onMeasure(session, lines)
   }
 
-  func show(_ session: Session, style: SidebarStyle) {
+  func show(_ session: Session, style: SidebarStyle, responseFill: Int?) {
     self.style = style
     self.session = session
+    self.responseFill = responseFill
     let size = style.textPoints
     let font = NSFont.systemFont(ofSize: size)
-    var text = style.showsActivity ? session.activityText : ""
-
-    if text.isEmpty, let closing = session.closing {
-      let source = String(closing.prefix(600)) as NSString
-
-      if let cached = Self.previews.object(forKey: source) {
-        text = cached as String
-      } else {
-        let lines = (source as String).split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces).trimmingPrefix(while: { $0 == "#" }) }
-        let joined = lines.joined(separator: " ")
-        text = (try? AttributedString(markdown: joined, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map { String($0.characters) } ?? joined
-        Self.previews.setObject(text as NSString, forKey: source)
-      }
-    }
+    let text = Self.previewText(style, session: session)
 
     for label in [date, preview, detail] { label.font = font }
 
@@ -433,7 +485,7 @@ private final class SidebarCell: NSTableCellView {
     case .short: date.stringValue = shortAge(session.lastActive, now: .now)
     }
 
-    let counts = Self.lineCounts(style, session: session)
+    let counts = Self.lineCounts(style, session: session, responseFill: responseFill)
     prompt.isHidden = counts[1] == 0
     prompt.font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
     prompt.stringValue = Self.promptText(session)
@@ -457,40 +509,26 @@ private final class SidebarCell: NSTableCellView {
     let font = NSFont.systemFont(ofSize: size)
     let titleFont = style.boldTitle ? NSFont.boldSystemFont(ofSize: size) : font
     let titleColor = selected ? NSColor.alternateSelectedControlTextColor : session.isArchived ? .secondaryLabelColor : .labelColor
-    let titleText = NSMutableAttributedString()
     let unread = style.showsUnread && session.isUnread
-    var dot: (name: String, color: NSColor)?
+    var mark: (name: String, color: NSColor)?
 
     switch session.rowStatus {
-    case .waiting: dot = ("circle.fill", .systemYellow)
-    case .failed: dot = ("xmark.circle.fill", .systemRed)
-    case .running: dot = ("circle.fill", .systemGreen)
-    case .finished where unread, .closed where unread: dot = ("circle.fill", selected ? .alternateSelectedControlTextColor : .controlAccentColor)
+    case .waiting: mark = ("circle.fill", .systemYellow)
+    case .failed: mark = ("xmark.circle.fill", .systemRed)
+    case .running: mark = ("circle.fill", .systemGreen)
+    case .finished where unread, .closed where unread: mark = ("circle.fill", selected ? .alternateSelectedControlTextColor : .controlAccentColor)
     default: break
     }
 
-    if let dot {
-      titleText.append(inlineSymbol(dot.name, color: dot.color, font: titleFont, pointSize: round(size * 0.6)))
-      titleText.append(NSAttributedString(string: " "))
-    }
-
-    titleText.append(NSAttributedString(string: session.rowTitle))
+    dot.isHidden = mark == nil
+    dot.image = mark.flatMap { NSImage(systemSymbolName: $0.name, accessibilityDescription: nil)?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: round(size * 0.6), weight: .regular)) }
+    dot.contentTintColor = mark?.color
     let titleParagraph = NSMutableParagraphStyle()
     titleParagraph.lineBreakMode = title.lineBreakMode
-    titleText.addAttributes([.font: titleFont, .foregroundColor: titleColor, .paragraphStyle: titleParagraph], range: NSRange(location: 0, length: titleText.length))
-    title.attributedStringValue = titleText
+    titleParagraph.firstLineHeadIndent = dot.image.map { $0.size.width + ceil((" " as NSString).size(withAttributes: [.font: titleFont]).width) } ?? 0
+    title.font = titleFont
+    title.attributedStringValue = NSAttributedString(string: session.rowTitle, attributes: [.font: titleFont, .foregroundColor: titleColor, .paragraphStyle: titleParagraph])
   }
-}
-
-/// A symbol in `color`, centered on the cap height of `font` so it sits level with the text after it.
-@MainActor
-private func inlineSymbol(_ name: String, color: NSColor, font: NSFont, pointSize: Double) -> NSAttributedString {
-  let configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular).applying(.init(paletteColors: [color]))
-  let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)!.withSymbolConfiguration(configuration)!
-  let attachment = NSTextAttachment()
-  attachment.image = image
-  attachment.bounds = NSRect(x: 0, y: (font.capHeight - image.size.height) / 2, width: image.size.width, height: image.size.height)
-  return NSAttributedString(attachment: attachment)
 }
 
 /// A frame-laid label for a sidebar row; the row sets its lines and wrapping.
