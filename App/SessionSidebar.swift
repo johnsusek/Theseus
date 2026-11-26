@@ -303,8 +303,8 @@ private final class HeaderCell: NSTableCellView {
 }
 
 /// A session's row. The style picks its parts: the title after its status dot, with a worktree symbol and the date beside it, then the
-/// last prompt in italics, the last response or what the session is doing, and task progress. Rows of one style share a height, so a
-/// row leaves blank what it has nothing for, except the tasks line, which only rows with tasks get.
+/// last prompt in italics, the last response or what the session is doing, and task progress. A part the row has nothing for takes no
+/// lines, so rows of one style can differ in height.
 private final class SidebarCell: NSTableCellView {
   static let identifier = NSUserInterfaceItemIdentifier("SidebarCell")
   /// Closing text as a row shows it, by the text it came from, so a refresh parses only what changed.
@@ -356,10 +356,17 @@ private final class SidebarCell: NSTableCellView {
     return lineHeights[size]!
   }
 
-  /// The lines of text each part takes: title, prompt, response, tasks; zero for a part the style hides. Only a session with tasks
-  /// gets the tasks line, so only its row grows.
+  /// The lines of text each part takes: title, prompt, response, tasks; zero for a part the style hides or the session has nothing for.
   private static func lineCounts(_ style: SidebarStyle, session: Session) -> [Int] {
-    [style.titleLines, style.showsPrompt ? 1 : 0, style.showsResponse ? style.responseLines : 0, style.showsTasks && session.tasksTotal > 0 ? 1 : 0]
+    let hasResponse = (style.showsActivity && !session.activityText.isEmpty) || session.closing?.contains(where: { !$0.isWhitespace }) == true
+    return [style.titleLines, style.showsPrompt && !promptText(session).isEmpty ? 1 : 0, style.showsResponse && hasResponse ? style.responseLines : 0, style.showsTasks && session.tasksTotal > 0 ? 1 : 0]
+  }
+
+  /// The last prompt on one line, empty for an untitled session, whose title is its prompt already.
+  private static func promptText(_ session: Session) -> String {
+    guard session.appTitle != nil || session.customTitle != nil else { return "" }
+
+    return session.lastPrompt?.split(whereSeparator: \.isNewline).joined(separator: " ") ?? ""
   }
 
   static func height(for style: SidebarStyle, session: Session) -> Double {
@@ -412,7 +419,6 @@ private final class SidebarCell: NSTableCellView {
       }
     }
 
-
     for label in [date, preview, detail] { label.font = font }
 
     title.maximumNumberOfLines = style.titleLines
@@ -427,16 +433,15 @@ private final class SidebarCell: NSTableCellView {
     case .short: date.stringValue = shortAge(session.lastActive, now: .now)
     }
 
-    // An untitled session's title is its prompt already.
-    let titled = session.appTitle != nil || session.customTitle != nil
-    prompt.isHidden = !style.showsPrompt
+    let counts = Self.lineCounts(style, session: session)
+    prompt.isHidden = counts[1] == 0
     prompt.font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
-    prompt.stringValue = titled ? session.lastPrompt?.split(whereSeparator: \.isNewline).joined(separator: " ") ?? "" : ""
-    preview.isHidden = !style.showsResponse
+    prompt.stringValue = Self.promptText(session)
+    preview.isHidden = counts[2] == 0
     preview.maximumNumberOfLines = style.responseLines
     preview.lineBreakMode = style.responseLines == 1 ? .byTruncatingTail : .byWordWrapping
     preview.stringValue = text
-    detail.isHidden = Self.lineCounts(style, session: session)[3] == 0
+    detail.isHidden = counts[3] == 0
     detail.stringValue = session.tasksTotal > 0 ? "\(session.tasksDone)/\(session.tasksTotal) tasks" : ""
     toolTip = text.isEmpty ? session.rowTitle : session.rowTitle + "\n" + text
     showTitle()
