@@ -4,6 +4,9 @@
 
 Theseus is a native Mac app for [Claude Code](https://code.claude.com). It runs the `claude` CLI you already have installed and logged in, one process per conversation, and draws the conversation in AppKit. It is an independent project, not made or endorsed by Anthropic.
 
+> [!NOTE]
+> Theseus has no login and never asks for an account, password or API key. If `claude` works in your terminal, Theseus works: it uses that CLI's login and plan, and makes no network requests of its own.
+
 The app talks to the CLI through [ClaudeEngine](https://github.com/johnsusek/ClaudeEngine), a Swift library for Claude Code's stream-json and control protocols.
 
 ## Features
