@@ -108,7 +108,7 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
       item("Show Agents", #selector(ConversationController.showAgents(_:)), "a", [.command, .control]),
       item("Show Changes", #selector(ConversationController.showChanges(_:)), "c", [.command, .control]),
       item("Show Verbose Transcript", #selector(ConversationController.toggleVerboseTranscript(_:))),
-      item("Show History", #selector(ConversationController.toggleHistory(_:))),
+      item("Show History", #selector(ConversationController.toggleHistory(_:)), "y"),
       .separator(),
       item("Show Archived Sessions", #selector(ProjectsWindowController.toggleArchivedSessions(_:))),
       menu("Filter", [item("All Sessions", #selector(ProjectsWindowController.filterSessions(_:)), tag: -1), .separator()]
@@ -129,7 +129,7 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
   session.items = [
     item("Allow", #selector(ConversationController.allowRequest(_:)), "\r"),
     item("Deny", #selector(ConversationController.denyRequest(_:)), "d"),
-    item("Show Request", #selector(ProjectsWindowController.showRequest(_:)), "y"),
+    item("Show Request", #selector(ProjectsWindowController.showRequest(_:)), "y", [.command, .option]),
     .separator(),
     item("Open", #selector(ProjectsWindowController.openSession(_:))),
     item("Pin", #selector(ProjectsWindowController.togglePinned(_:))),
