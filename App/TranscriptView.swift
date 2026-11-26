@@ -126,6 +126,24 @@ final class TranscriptView: NSView {
 
     if textView.textContainerInset != inset { textView.textContainerInset = inset }
 
+    guard inLiveResize else { return fitColumn() }
+
+    // Refitting renders every reply with a code block or table again, at a width the markdown cache has not seen,
+    // so a drag refits a few times a second rather than on every frame, and once more when it ends.
+    guard !isFitPending else { return }
+
+    isFitPending = true
+    Task { [weak self] in
+      try? await Task.sleep(for: .milliseconds(150))
+      self?.isFitPending = false
+      self?.fitColumn()
+    }
+  }
+
+  private var isFitPending = false
+
+  override func viewDidEndLiveResize() {
+    super.viewDidEndLiveResize()
     fitColumn()
   }
 
