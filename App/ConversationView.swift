@@ -1,6 +1,6 @@
 import AppKit
 
-/// A conversation window's content: the transcript and the prompt field floating over its bottom edge.
+/// A conversation window's content, which runs under the see-through title bar: the transcript and the prompt field floating over its bottom edge.
 /// A blank conversation shows the start page over a blur of what is behind the window, as Safari's start page does, and its picks just above the prompt.
 final class ConversationView: NSView {
   let transcript = TranscriptView()
@@ -41,7 +41,7 @@ final class ConversationView: NSView {
       prompt.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
       prompt.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
       prompt.bottomAnchor.constraint(equalTo: transcript.bottomAnchor),
-      startPage.topAnchor.constraint(equalTo: topAnchor),
+      startPage.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor),
       startPage.leadingAnchor.constraint(equalTo: leadingAnchor),
       startPage.trailingAnchor.constraint(equalTo: trailingAnchor),
       startPage.bottomAnchor.constraint(equalTo: picks.topAnchor, constant: -12),
@@ -53,9 +53,10 @@ final class ConversationView: NSView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("ConversationView is built in code") }
 
-  /// The transcript's last lines scroll clear of the field, however tall the draft makes it.
+  /// The transcript's first lines scroll clear of the title bar, and its last lines clear of the field, however tall the draft makes it.
   override func layout() {
     super.layout()
+    transcript.topInset = safeAreaInsets.top
     transcript.bottomInset = prompt.frame.height + 8
   }
 }

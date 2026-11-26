@@ -50,7 +50,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   init(app: AppDelegate, project: URL, session existing: Session? = nil) {
     self.app = app
     self.project = project
-    let window = ConversationWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 520), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+    let window = ConversationWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 520), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
     super.init(window: window)
 
     window.titlebarAppearsTransparent = true
