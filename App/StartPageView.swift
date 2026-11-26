@@ -1,8 +1,8 @@
 import AppKit
 import ClaudeWorkspace
 
-/// A session on the start page: a rounded button with its status mark, its title, what it is doing or asks under the title,
-/// the controls that answer a request, and when it was last active.
+/// A session on the start page: a rounded button with its status mark, its title, what it is doing or asks under the title
+/// (else how its last turn closed), the controls that answer a request, and when it was last active.
 final class SessionPill: NSButton {
   static let height = 48.0
   let session: Session
@@ -61,9 +61,14 @@ final class SessionPill: NSButton {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("SessionPill is built in code") }
 
-  /// Puts the session's current status, title, activity, request and date in the pill. A pill with no activity centers its title.
+  /// Puts the session's current status, title, activity or closing line, request and date in the pill. A pill with neither centers its title.
   func update() {
-    let activity = session.activityText
+    var activity = session.activityText
+
+    if activity.isEmpty, let closing = session.closing {
+      let line = closing.split(whereSeparator: \.isNewline).first { !$0.allSatisfy(\.isWhitespace) }.map(String.init) ?? ""
+      activity = (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map { String($0.characters) } ?? line
+    }
 
     mark.show(status: session.rowStatus, isUnread: session.isUnread)
     titleLabel.stringValue = session.rowTitle
