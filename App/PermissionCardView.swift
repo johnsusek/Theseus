@@ -20,6 +20,9 @@ final class PermissionCardView: NSView, CardContent, ActiveAppearing {
   private let deny: NSButton
   private let allow: NSButton
   private let bodyLimit: CGFloat
+  /// Whether the body is taller than `bodyLimit`, as last measured.
+  private var bodyOverflows = false
+  private var flashedScroller = false
   private let state: PermissionCardState
   private let layoutDelegate: TranscriptLayoutDelegate
   private let answer: (Bool) -> Void
@@ -98,7 +101,9 @@ final class PermissionCardView: NSView, CardContent, ActiveAppearing {
     if bodyText.frame.width != width { bodyText.setFrameSize(NSSize(width: width, height: bodyText.frame.height)) }
 
     layout.ensureLayout(for: layout.documentRange)
-    return min(ceil(layout.usageBoundsForTextContainer.height), bodyLimit)
+    let natural = ceil(layout.usageBoundsForTextContainer.height)
+    bodyOverflows = natural > bodyLimit
+    return min(natural, bodyLimit)
   }
 
   override func layout() {
@@ -117,6 +122,12 @@ final class PermissionCardView: NSView, CardContent, ActiveAppearing {
     if !bodyScroll.isHidden {
       let top = Self.padding + Self.titleHeight + Self.spacing
       bodyScroll.frame = NSRect(x: Self.padding, y: top, width: inner, height: max(buttonsTop - Self.spacing - top, 0))
+
+      // Overlay scrollers stay hidden until a scroll, so a body cut off at `bodyLimit` flashes its scroller once to show there is more.
+      if bodyOverflows, window != nil, !flashedScroller {
+        flashedScroller = true
+        bodyScroll.flashScrollers()
+      }
     }
 
     if let checkbox {

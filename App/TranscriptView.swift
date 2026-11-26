@@ -296,7 +296,7 @@ final class TranscriptView: NSView {
 
       return ViewAttachment { [unowned self] in
         // A plan is read in full before it is approved, so it gets more room than a command or a diff.
-        PermissionCardView(prompt: prompt, body: body, bodyLimit: prompt.isPlan ? 360 : 150, layoutDelegate: layoutDelegate, state: state, isActive: isActive) { [unowned self] allow in answer(request, allow: allow) }
+        PermissionCardView(prompt: prompt, body: body, bodyLimit: prompt.isPlan ? 360 : 320, layoutDelegate: layoutDelegate, state: state, isActive: isActive) { [unowned self] allow in answer(request, allow: allow) }
       }
     default:
       return NSTextAttachment()
