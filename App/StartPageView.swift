@@ -29,10 +29,10 @@ final class SessionPill: NSButton {
     title = ""
     isBordered = false
     translatesAutoresizingMaskIntoConstraints = false
-    titleLabel.font = .systemFont(ofSize: 14)
+    titleLabel.font = .systemFont(ofSize: 11, weight: .semibold)
     date.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     date.setContentCompressionResistancePriority(.required, for: .horizontal)
-    detail.font = .systemFont(ofSize: 12)
+    detail.font = .systemFont(ofSize: 11)
     detail.maximumNumberOfLines = 2
     detail.cell?.truncatesLastVisibleLine = true
     detail.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
@@ -263,12 +263,12 @@ final class StartPageView: NSView {
   private let historyPane = NSStackView()
   private let page = NSStackView()
   private let grid = PillGrid()
-  private let viewMore = NSButton(title: "View More", target: nil, action: nil)
-  /// The sessions last shown, kept for View More.
+  private let showAll = NSButton(title: "Show All", target: nil, action: nil)
+  /// The sessions last shown, kept for Show All.
   private var sessions: [Session] = []
   /// How many sessions lead the list and always show.
   private var leading = 0
-  private var limit = 6
+  private var showsAll = false
   /// The ids of the sessions shown.
   private var shown: [String]?
 
@@ -288,13 +288,17 @@ final class StartPageView: NSView {
     startScroll.autohidesScrollers = true
     grid.translatesAutoresizingMaskIntoConstraints = false
 
-    let sessionsHeading = headingRow("Sessions", trailing: linkButton("See History"))
-    viewMore.isBordered = false
-    viewMore.contentTintColor = .linkColor
-    viewMore.font = .systemFont(ofSize: 14)
-    viewMore.target = self
-    viewMore.action = #selector(showMore(_:))
-    page.setViews([sessionsHeading, grid, viewMore], in: .top)
+    showAll.isBordered = false
+    showAll.contentTintColor = .linkColor
+    showAll.font = .systemFont(ofSize: 13)
+    showAll.imagePosition = .imageTrailing
+    showAll.target = self
+    showAll.action = #selector(toggleShowAll(_:))
+    let links = NSStackView(views: [linkButton("See History"), showAll])
+    links.spacing = 16
+    links.setHuggingPriority(.defaultHigh, for: .horizontal)
+    let sessionsHeading = headingRow("Sessions", trailing: links)
+    page.setViews([sessionsHeading, grid], in: .top)
 
     let search = NSSearchField()
     search.placeholderString = "Search History"
@@ -347,13 +351,15 @@ final class StartPageView: NSView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("StartPageView is built in code") }
 
-  /// Shows the first `leading` sessions and, after them, enough of the rest to reach the limit, which each View More raises by six.
+  /// Shows the first `leading` sessions and enough of the rest to make six, or every session after Show All.
   func show(_ sessions: [Session], leading: Int) {
     self.sessions = sessions
     self.leading = leading
-    let visible = Array(sessions.prefix(max(limit, leading)))
+    let visible = showsAll ? sessions : Array(sessions.prefix(max(6, leading)))
     let ids = visible.map(\.id)
-    viewMore.isHidden = sessions.count <= visible.count
+    showAll.isHidden = !showsAll && sessions.count <= visible.count
+    showAll.title = showsAll ? "Show Less" : "Show All"
+    showAll.image = NSImage(systemSymbolName: showsAll ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
 
     if ids == shown {
       for pill in grid.pills { pill.update() }
@@ -384,12 +390,12 @@ final class StartPageView: NSView {
     let button = NSButton(title: title, target: nil, action: #selector(ConversationController.toggleHistory(_:)))
     button.isBordered = false
     button.contentTintColor = .linkColor
-    button.font = .systemFont(ofSize: 14)
+    button.font = .systemFont(ofSize: 13)
     return button
   }
 
-  @objc private func showMore(_ sender: Any?) {
-    limit += 6
+  @objc private func toggleShowAll(_ sender: Any?) {
+    showsAll.toggle()
     show(sessions, leading: leading)
   }
 
