@@ -100,13 +100,20 @@ final class TextCellView: NSTableCellView {
   required init?(coder: NSCoder) { fatalError("TextCellView is built in code") }
 }
 
-/// A session's status as a mark: a spinner while running, a warning while waiting, a cross after a failure, a dot while unread.
+/// A session's status as a mark: a spinner while running, a yellow dot while waiting, a cross after a failure, a dot while unread.
 /// A group passes a symbol instead. The mark has a fixed slot, so titles beside it line up.
 final class RowStatusMark: NSView {
   private let mark = NSImageView()
   private let spinner = NSProgressIndicator()
 
-  init() {
+  private let spinnerSize: Double
+  /// The one size of every dot and cross in a compact mark; a table row's marks keep their own sizes.
+  private let dotSize: Double?
+
+  /// A compact mark has a smaller spinner and same-size dots, for a start page pill's corner.
+  init(compact: Bool = false) {
+    spinnerSize = compact ? 12 : 14
+    dotSize = compact ? 9 : nil
     super.init(frame: .zero)
     spinner.style = .spinning
     spinner.controlSize = .small
@@ -127,8 +134,8 @@ final class RowStatusMark: NSView {
       mark.centerYAnchor.constraint(equalTo: centerYAnchor),
       spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
       spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
-      spinner.widthAnchor.constraint(equalToConstant: 14),
-      spinner.heightAnchor.constraint(equalToConstant: 14)
+      spinner.widthAnchor.constraint(equalToConstant: spinnerSize),
+      spinner.heightAnchor.constraint(equalToConstant: spinnerSize)
     ])
   }
 
@@ -149,15 +156,17 @@ final class RowStatusMark: NSView {
 
     switch status {
     case .waiting:
-      mark.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: RowStatus.waiting.title)
-      mark.contentTintColor = .systemOrange
+      mark.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: RowStatus.waiting.title)
+      mark.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: dotSize ?? 9, weight: .regular)
+      mark.contentTintColor = .systemYellow
     case .failed:
       mark.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: RowStatus.failed.title)
+      mark.symbolConfiguration = dotSize.map { NSImage.SymbolConfiguration(pointSize: $0, weight: .regular) }
       mark.contentTintColor = .systemRed
     case .finished where isUnread, .closed where isUnread:
       mark.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "Unread")
       mark.toolTip = "Unread"
-      mark.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 7, weight: .regular)
+      mark.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: dotSize ?? 7, weight: .regular)
       mark.contentTintColor = .controlAccentColor
     default:
       mark.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }

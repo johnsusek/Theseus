@@ -13,22 +13,24 @@ extension NSColor {
   }
 }
 
-/// A session on the start page: a rounded button with its status mark, its title, what it is doing or asks under the title
-/// (else how its last turn closed), the controls that answer a request, and when it was last active.
+/// A session on the start page: a rounded button with its status mark, its title and when it was last active, what it is doing
+/// or asks under the title (else how its last turn closed), and the controls that answer a request.
 final class SessionPill: NSButton {
   /// The least height; a detail of several lines grows the pill, and the other pill in its row with it.
   static let height = 48.0
   let session: Session
-  private let mark = RowStatusMark()
+  private let mark = RowStatusMark(compact: true)
   private let titleLabel = cellLabel()
-  private let detail = cellLabel(.labelColor.withAlphaComponent(0.8), truncation: .byWordWrapping)
+  private let detail = cellLabel(.labelColor.withAlphaComponent(0.65), truncation: .byWordWrapping)
   /// The Activity column's cell without its text: Deny and Allow, Answer, or Review.
   private let answers = ActivityCellView()
   private let date = cellLabel(.secondaryLabelColor)
-  /// Holds the title and the detail under it, centered in the pill.
+  /// Holds the title and the detail under it, at the top of the pill so the titles in a row line up.
   private let text = NSLayoutGuide()
   private lazy var alone = titleLabel.bottomAnchor.constraint(equalTo: text.bottomAnchor)
   private lazy var withDetail = detail.bottomAnchor.constraint(equalTo: text.bottomAnchor)
+  /// The space between the detail and the answer controls, none without a request.
+  private lazy var answersGap = detail.trailingAnchor.constraint(equalTo: answers.leadingAnchor)
   private var isHovered = false {
     didSet { needsDisplay = true }
   }
@@ -41,7 +43,7 @@ final class SessionPill: NSButton {
     title = ""
     isBordered = false
     translatesAutoresizingMaskIntoConstraints = false
-    titleLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+    titleLabel.font = .systemFont(ofSize: 14)
     date.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     date.setContentCompressionResistancePriority(.required, for: .horizontal)
     detail.font = .systemFont(ofSize: 11)
@@ -64,22 +66,23 @@ final class SessionPill: NSButton {
 
     NSLayoutConstraint.activate([
       heightAnchor.constraint(greaterThanOrEqualToConstant: Self.height),
-      heightAnchor.constraint(greaterThanOrEqualTo: text.heightAnchor, constant: 12),
+      heightAnchor.constraint(greaterThanOrEqualTo: text.heightAnchor, constant: 24),
       least,
-      text.centerYAnchor.constraint(equalTo: centerYAnchor),
+      text.topAnchor.constraint(equalTo: topAnchor, constant: 12),
       titleLabel.topAnchor.constraint(equalTo: text.topAnchor),
-      mark.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-      mark.centerYAnchor.constraint(equalTo: centerYAnchor),
-      titleLabel.leadingAnchor.constraint(equalTo: mark.trailingAnchor, constant: 6),
-      titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: answers.leadingAnchor, constant: -8),
+      // The status mark sits in the corner level with the title, apart from the text.
+      mark.centerXAnchor.constraint(equalTo: leadingAnchor, constant: 11),
+      mark.centerYAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor, constant: -(titleLabel.font?.capHeight ?? 0) / 2),
+      titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22),
+      titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: date.leadingAnchor, constant: -8),
+      date.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -22),
+      date.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
       detail.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 3),
       detail.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-      detail.trailingAnchor.constraint(equalTo: answers.leadingAnchor, constant: -8),
-      answers.topAnchor.constraint(equalTo: topAnchor),
+      answersGap,
+      answers.topAnchor.constraint(equalTo: date.bottomAnchor),
       answers.bottomAnchor.constraint(equalTo: bottomAnchor),
-      answers.trailingAnchor.constraint(equalTo: date.leadingAnchor, constant: -8),
-      date.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-      date.centerYAnchor.constraint(equalTo: centerYAnchor),
+      answers.trailingAnchor.constraint(equalTo: date.trailingAnchor),
       narrow
     ])
     update()
@@ -88,24 +91,19 @@ final class SessionPill: NSButton {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("SessionPill is built in code") }
 
-  /// Puts the session's current status, title, activity or closing line, request and date in the pill. A pill with neither centers its title.
+  /// Puts the session's current status, title, activity or closing line, request and date in the pill.
   func update() {
-    var activity = session.activityText
-
-    if activity.isEmpty, let closing = session.closing {
-      let line = closing.split(whereSeparator: \.isNewline).first { !$0.allSatisfy(\.isWhitespace) }.map(String.init) ?? ""
-      activity = (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map { String($0.characters) } ?? line
-    }
+    let activity = session.detailText
 
     mark.show(status: session.rowStatus, isUnread: session.isUnread)
     titleLabel.stringValue = session.rowTitle
-    let relative = session.lastActive.formatted(.relative(presentation: .named, unitsStyle: .abbreviated))
-    date.stringValue = relative.prefix(1).capitalized + relative.dropFirst()
+    date.stringValue = session.lastActiveText
     detail.stringValue = activity
     detail.isHidden = activity.isEmpty
     toolTip = activity.isEmpty ? session.rowTitle : session.rowTitle + "\n" + activity
     setAccessibilityLabel(session.rowTitle)
     answers.show("", request: session.request)
+    answersGap.constant = session.request == nil ? 0 : -8
     NSLayoutConstraint.deactivate([alone, withDetail])
     (activity.isEmpty ? alone : withDetail).isActive = true
   }
@@ -157,11 +155,10 @@ final class SessionPill: NSButton {
   }
 }
 
-/// Session pills two to a row, three once the grid is wide enough, each row's pills as tall as each other. Each session keeps its pill, so a pill whose session moves slides to its new place.
+/// Session pills as many to a row as fit at least 340 pt wide, each row's pills as tall as each other. Each session keeps its pill, so a pill whose session moves slides to its new place.
 final class PillGrid: NSView {
   static let spacing = 10.0
-  /// The least width that takes three columns.
-  static let threeColumnWidth = 900.0
+  static let minPillWidth = 340.0
   var onOpen: (Session) -> Void = { _ in }
   private(set) var pills: [SessionPill] = []
   private var placement: [NSLayoutConstraint] = []
@@ -222,7 +219,7 @@ final class PillGrid: NSView {
 
   override func layout() {
     super.layout()
-    let wanted = bounds.width >= Self.threeColumnWidth ? 3 : 2
+    let wanted = max(1, Int((bounds.width + Self.spacing) / (Self.minPillWidth + Self.spacing)))
 
     if wanted != columns {
       columns = wanted

@@ -1,7 +1,7 @@
 import AppKit
 
 struct MarkdownStyle: Hashable {
-  var font = NSFont.systemFont(ofSize: 15)
+  var font = NSFont.systemFont(ofSize: 15, weight: .light)
   var color = NSColor.labelColor
   var lineSpacing = 3.0
   /// Space kept clear on each side of every block.

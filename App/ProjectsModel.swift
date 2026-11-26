@@ -7,7 +7,7 @@ enum RowStatus: Int, CaseIterable {
   case waiting, failed, running, finished, closed
 
   var title: String { ["Needs Input", "Failed", "Running", "Finished", "Closed"][rawValue] }
-  var symbol: String { ["exclamationmark.triangle", "xmark.circle", "circle.dotted", "checkmark.circle", "moon.zzz"][rawValue] }
+  var symbol: String { ["circle.fill", "xmark.circle", "circle.dotted", "checkmark.circle", "moon.zzz"][rawValue] }
 }
 
 /// How recently a session must have been active to show: hours count back from now, days are calendar days with today as the first.
