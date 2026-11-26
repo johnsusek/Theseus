@@ -1,20 +1,18 @@
 import AppKit
 
 /// A conversation window's content: the transcript and the prompt field floating over its bottom edge.
-/// A blank conversation shows its picks centered above the prompt.
+/// A blank conversation shows the start page, and its picks just above the prompt.
 final class ConversationView: NSView {
   let transcript = TranscriptView()
   let prompt = PromptField()
   let picks = NewConversationView()
+  let startPage = StartPageView()
 
   init() {
     super.init(frame: .zero)
     prompt.textView.finder = transcript.textView
 
-    let above = NSLayoutGuide()
-    addLayoutGuide(above)
-
-    for view in [transcript, picks, prompt] {
+    for view in [transcript, startPage, picks, prompt] {
       view.translatesAutoresizingMaskIntoConstraints = false
       addSubview(view)
     }
@@ -29,10 +27,12 @@ final class ConversationView: NSView {
       prompt.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
       prompt.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
       prompt.bottomAnchor.constraint(equalTo: transcript.bottomAnchor),
-      above.topAnchor.constraint(equalTo: topAnchor),
-      above.bottomAnchor.constraint(equalTo: prompt.topAnchor),
+      startPage.topAnchor.constraint(equalTo: topAnchor),
+      startPage.leadingAnchor.constraint(equalTo: leadingAnchor),
+      startPage.trailingAnchor.constraint(equalTo: trailingAnchor),
+      startPage.bottomAnchor.constraint(equalTo: picks.topAnchor, constant: -12),
       picks.centerXAnchor.constraint(equalTo: centerXAnchor),
-      picks.centerYAnchor.constraint(equalTo: above.centerYAnchor)
+      picks.bottomAnchor.constraint(equalTo: prompt.topAnchor, constant: -10)
     ])
   }
 

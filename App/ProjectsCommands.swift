@@ -48,6 +48,9 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
     let row = outline.clickedRow
     guard row >= 0, let item = outline.item(atRow: row) else { return }
 
+    // The click that activated the window never reached the table, and the table does not select on the second click.
+    if !outline.isRowSelected(row) { outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
+
     if let session = item as? Session { return app.showConversation(session) }
 
     if let group = item as? GroupItem { toggle(group) }
@@ -88,9 +91,8 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
     answer(selectedSessions, allow: false)
   }
 
-  /// Answers the permission requests among `sessions`, as their cards' buttons would with the checkbox off.
   private func answer(_ sessions: [Session], allow: Bool) {
-    for (session, request) in asking(sessions) { session.live?.respond(to: request, with: permissionDecision(for: request, allow: allow, always: false)) }
+    for session in sessions { session.answerPermission(allow: allow) }
   }
 
   /// Session > Show Request, Command-Y: the selected session's request in full.
@@ -109,9 +111,9 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
   }
 
   func answerRow(_ sender: NSPopUpButton) {
-    guard let session = session(for: sender), let request = session.request, let question = request.questions.first, let label = sender.selectedItem?.representedObject as? String else { return }
+    guard let label = sender.selectedItem?.representedObject as? String else { return }
 
-    session.live?.respond(to: request, with: .answer([question.question: label], to: request))
+    session(for: sender)?.answerQuestion(label)
   }
 
   /// Review opens a plan's conversation, where the plan reads in full; Answer… shows several questions in the popover.
@@ -234,6 +236,8 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
     case #selector(stopSession(_:)):
       return sessions.contains { $0.live.map { $0.isRunning && $0.state != .idle } ?? false }
     case #selector(allowRequest(_:)), #selector(denyRequest(_:)):
+      // A conversation window retitles them for a question.
+      menuItem.title = menuItem.action == #selector(allowRequest(_:)) ? "Allow" : "Deny"
       return !asking(sessions).isEmpty
     case #selector(showRequest(_:)):
       return sessions.count == 1 && sessions[0].request != nil
@@ -333,6 +337,7 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
     for status in RowStatus.allCases {
       filter.setImage(NSImage(systemSymbolName: status.symbol, accessibilityDescription: status.title), forSegment: status.rawValue)
       filter.setToolTip(status.title, forSegment: status.rawValue)
+      filter.setSelected(query.statuses.contains(status), forSegment: status.rawValue)
     }
 
     filter.setAccessibilityLabel("Show Sessions by Status")
@@ -342,6 +347,7 @@ extension ProjectsWindowController: NSMenuDelegate, NSMenuItemValidation, NSTool
       updatedFilter.lastItem?.tag = range.rawValue
     }
 
+    updatedFilter.selectItem(withTag: query.updated.rawValue)
     updatedFilter.target = self
     updatedFilter.action = #selector(filterUpdated(_:))
     updatedFilter.setAccessibilityLabel("Show Sessions by Last Update")

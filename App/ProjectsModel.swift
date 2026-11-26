@@ -67,6 +67,49 @@ extension Session {
     return live.isRunning ? .finished : .closed
   }
 
+  /// The request a waiting session asks, what a running one is doing, why a failed one stopped.
+  /// A session another app has open says where it waits.
+  var activityText: String {
+    if let request {
+      if RequestKind(request) == .question { return request.questions.first?.question ?? "Asking a question" }
+
+      return requestSummary(request, projectName: project?.name ?? "")
+    }
+
+    if let owner, owner.status == "waiting" { return "Waiting in " + ownerName(entrypoint: owner.entrypoint) }
+
+    guard let live else { return "" }
+
+    switch rowStatus {
+    case .waiting:
+      return "Waiting for approval"
+    case .running:
+      return activityLine(summary: live.activity, isWaiting: false, transcript: transcript)
+    case .failed:
+      if let failure = live.exit?.failure { return failure }
+
+      if let code = live.exit?.code, code != 0 { return "Exited with code \(code)" }
+
+      return "The last turn failed"
+    default:
+      return ""
+    }
+  }
+
+  /// Answers the open permission request, as its card's buttons would with the checkbox off.
+  func answerPermission(allow: Bool) {
+    guard let request, RequestKind(request) == .permission else { return }
+
+    live?.respond(to: request, with: permissionDecision(for: request, allow: allow, always: false))
+  }
+
+  /// Answers the open request's only question with one of its options.
+  func answerQuestion(_ label: String) {
+    guard let request, let question = request.questions.first else { return }
+
+    live?.respond(to: request, with: .answer([question.question: label], to: request))
+  }
+
   /// The title, else the first prompt, cut to one line.
   var rowTitle: String {
     let source = title ?? transcript.turns.lazy.compactMap { $0.prompt?.text }.first ?? ""
@@ -166,6 +209,23 @@ struct ProjectsQuery {
 
   var isFiltered: Bool { !statuses.isEmpty || updated != .anyTime || !search.isEmpty }
 
+  /// Everything but the search, which starts empty each launch. Each sort key is prefixed "+" for ascending or "-" for descending.
+  var saved: [String: Any] {
+    ["statuses": statuses.map(\.rawValue).sorted(), "updated": updated.rawValue, "showsArchived": showsArchived, "sort": sortOrder.compactMap { descriptor in descriptor.key.map { (descriptor.ascending ? "+" : "-") + $0 } }]
+  }
+
+  init() {}
+
+  init(saved: [String: Any]) {
+    statuses = Set((saved["statuses"] as? [Int] ?? []).compactMap(RowStatus.init))
+    updated = (saved["updated"] as? Int).flatMap(UpdatedRange.init) ?? .anyTime
+    showsArchived = saved["showsArchived"] as? Bool ?? false
+
+    if let sort = saved["sort"] as? [String], !sort.isEmpty {
+      sortOrder = sort.map { NSSortDescriptor(key: String($0.dropFirst()), ascending: $0.hasPrefix("+")) }
+    }
+  }
+
   /// A conversation that has written nothing and run no turn is an empty tab still starting, so it stays out of the list.
   @MainActor
   func shows(_ session: Session, now: Date) -> Bool {
@@ -178,6 +238,14 @@ struct ProjectsQuery {
     if let start = updated.start(now: now), session.lastActive < start { return false }
 
     return search.isEmpty || session.rowTitle.localizedCaseInsensitiveContains(search) || session.project?.name.localizedCaseInsensitiveContains(search) == true
+  }
+
+  /// The sessions this query shows from `sessions`, in its sort order.
+  @MainActor
+  func sessions(_ sessions: [Session], now: Date = .now) -> [Session] {
+    let shown = sessions.filter { shows($0, now: now) }
+    let keys = Dictionary(shown.map { (ObjectIdentifier($0), SortKeys($0)) }) { first, _ in first }
+    return shown.sorted { keys[ObjectIdentifier($0)]!.precedes(keys[ObjectIdentifier($1)]!, by: sortOrder) }
   }
 
   /// Pinned sessions on top, then each project's other sessions. A project with nothing shown keeps its row until a filter or a search hides it.
@@ -220,4 +288,42 @@ func updatedText(_ date: Date, now: Date, calendar: Calendar = .current) -> Stri
   if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) { return "Yesterday" }
 
   return date.formatted(date: .numeric, time: .omitted)
+}
+
+/// Sessions grouped by the calendar day they were last active. Sessions of one day must be next to each other, as a sort by date leaves them.
+@MainActor
+func sessionsByDay(_ sessions: [Session], calendar: Calendar = .current) -> [(day: Date, sessions: [Session])] {
+  var days: [(day: Date, sessions: [Session])] = []
+
+  for session in sessions {
+    let day = calendar.startOfDay(for: session.lastActive)
+
+    if days.last?.day == day {
+      days[days.count - 1].sessions.append(session)
+    } else {
+      days.append((day, [session]))
+    }
+  }
+
+  return days
+}
+
+/// "Today", "Yesterday", then "Monday, November 23, 2026".
+func dayTitle(_ day: Date, now: Date, calendar: Calendar = .current) -> String {
+  if calendar.isDate(day, inSameDayAs: now) { return "Today" }
+
+  if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(day, inSameDayAs: yesterday) { return "Yesterday" }
+
+  return day.formatted(.dateTime.weekday(.wide).month(.wide).day().year())
+}
+
+/// A permission request in one line for a row, which offers Allow right beside it: a command names the command,
+/// and anything else says what its card's title says.
+func requestSummary(_ request: PermissionRequest, projectName: String) -> String {
+  let prompt = PermissionPrompt(request, projectName: projectName)
+  guard request.toolName == "Bash", case .code(let command) = prompt.body, !command.isEmpty else { return prompt.title }
+
+  let line = command.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? command
+  let shown = line.count > 80 ? line.prefix(79) + "\u{2026}" : line + (command.contains("\n") ? " \u{2026}" : "")
+  return "Run \u{201C}\(shown)\u{201D}?"
 }

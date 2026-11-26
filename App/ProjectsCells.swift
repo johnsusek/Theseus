@@ -1,5 +1,6 @@
 import AppKit
 import ClaudeEngine
+import ClaudeWorkspace
 
 /// The Projects window's answers, which a row's buttons send through the responder chain to the window's controller.
 @MainActor @objc protocol RowRequestActions {
@@ -7,6 +8,65 @@ import ClaudeEngine
   func denyRow(_ sender: NSControl)
   func answerRow(_ sender: NSPopUpButton)
   func reviewRow(_ sender: NSControl)
+}
+
+extension ProjectsColumn {
+  /// The column with its widths and sort. Context starts hidden.
+  func makeTableColumn() -> NSTableColumn {
+    let column = NSTableColumn(identifier: identifier)
+    let widths: [ProjectsColumn: (CGFloat, CGFloat)] = [.title: (200, 300), .status: (200, 320), .tasks: (70, 86), .changes: (60, 80), .context: (50, 60), .location: (90, 150), .updated: (70, 90)]
+
+    column.title = heading
+    column.minWidth = widths[self]?.0 ?? 60
+    column.width = widths[self]?.1 ?? 80
+    column.resizingMask = self == .title || self == .status ? [.autoresizingMask, .userResizingMask] : .userResizingMask
+    // The status sort puts what needs you first; Updated puts the newest first.
+    column.sortDescriptorPrototype = NSSortDescriptor(key: rawValue, ascending: self != .updated && self != .changes && self != .context && self != .tasks)
+    column.isHidden = self == .context
+    return column
+  }
+
+  /// A new cell for this column's rows.
+  func makeCell() -> NSView {
+    let cell: NSView
+
+    switch self {
+    case .title: cell = NameCellView()
+    case .status: cell = ActivityCellView()
+    case .tasks: cell = TaskCellView()
+    case .changes: cell = ChangesCellView()
+    case .context: cell = TextCellView(alignment: .right)
+    case .location: cell = TextCellView(truncation: .byTruncatingMiddle)
+    case .updated: cell = TextCellView()
+    }
+
+    cell.identifier = identifier
+    return cell
+  }
+}
+
+/// Puts a session's values for `column` in a cell from `ProjectsColumn.makeCell`.
+@MainActor
+func configureCell(_ view: NSView, _ column: ProjectsColumn, _ session: Session) {
+  switch column {
+  case .title:
+    (view as? NameCellView)?.show(title: session.rowTitle, status: session.rowStatus, isUnread: session.isUnread, isDimmed: session.isArchived)
+  case .status:
+    (view as? ActivityCellView)?.show(session.activityText, request: session.request)
+  case .tasks:
+    (view as? TaskCellView)?.show(done: session.tasksDone, total: session.tasksTotal)
+  case .changes:
+    (view as? ChangesCellView)?.show(added: session.linesAdded, removed: session.linesRemoved, counts: !session.transcript.changedFiles.isEmpty)
+  case .context:
+    (view as? NSTableCellView)?.textField?.stringValue = session.contextFraction.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? ""
+  case .location:
+    // A pinned session is listed outside its project, so its location names the project.
+    let location = session.isPinned ? [session.project?.name ?? "", session.location].filter { !$0.isEmpty }.joined(separator: " · ") : session.location
+    (view as? NSTableCellView)?.textField?.stringValue = location
+    (view as? NSTableCellView)?.textField?.toolTip = session.workingDirectory.path
+  case .updated:
+    (view as? NSTableCellView)?.textField?.stringValue = updatedText(session.lastActive, now: .now)
+  }
 }
 
 /// A label for a table cell: one line, truncated, in the system font.
@@ -40,50 +100,43 @@ final class TextCellView: NSTableCellView {
   required init?(coder: NSCoder) { fatalError("TextCellView is built in code") }
 }
 
-/// The Name column: a session's status mark or a group's symbol, then the title. The mark has a fixed slot so titles line up.
-final class NameCellView: NSTableCellView {
+/// A session's status as a mark: a spinner while running, a warning while waiting, a cross after a failure, a dot while unread.
+/// A group passes a symbol instead. The mark has a fixed slot, so titles beside it line up.
+final class RowStatusMark: NSView {
   private let mark = NSImageView()
   private let spinner = NSProgressIndicator()
 
   init() {
     super.init(frame: .zero)
-    let label = cellLabel()
-
     spinner.style = .spinning
     spinner.controlSize = .small
     spinner.isDisplayedWhenStopped = false
     spinner.toolTip = RowStatus.running.title
     spinner.setAccessibilityLabel(RowStatus.running.title)
-    textField = label
-    imageView = mark
+    translatesAutoresizingMaskIntoConstraints = false
 
-    for view in [mark, spinner, label] {
+    for view in [mark, spinner] {
       view.translatesAutoresizingMaskIntoConstraints = false
       addSubview(view)
     }
 
     NSLayoutConstraint.activate([
-      mark.centerXAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      widthAnchor.constraint(equalToConstant: 20),
+      heightAnchor.constraint(equalToConstant: 16),
+      mark.centerXAnchor.constraint(equalTo: centerXAnchor),
       mark.centerYAnchor.constraint(equalTo: centerYAnchor),
-      spinner.centerXAnchor.constraint(equalTo: mark.centerXAnchor),
+      spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
       spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
       spinner.widthAnchor.constraint(equalToConstant: 14),
-      spinner.heightAnchor.constraint(equalToConstant: 14),
-      label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
-      label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-      label.centerYAnchor.constraint(equalTo: centerYAnchor)
+      spinner.heightAnchor.constraint(equalToConstant: 14)
     ])
   }
 
   @available(*, unavailable)
-  required init?(coder: NSCoder) { fatalError("NameCellView is built in code") }
+  required init?(coder: NSCoder) { fatalError("RowStatusMark is built in code") }
 
-  /// A session's row passes its status; a group's passes its symbol. An unread session that is not waiting, failed or running shows a dot.
-  func show(title: String, status: RowStatus? = nil, symbol: String? = nil, isUnread: Bool = false, isDimmed: Bool = false) {
-    textField?.stringValue = title
-    textField?.textColor = isDimmed ? .secondaryLabelColor : .labelColor
-    toolTip = title
-
+  /// An unread session that is not waiting, failed or running shows a dot.
+  func show(status: RowStatus? = nil, symbol: String? = nil, isUnread: Bool = false) {
     if status == .running {
       spinner.startAnimation(nil)
     } else {
@@ -110,6 +163,39 @@ final class NameCellView: NSTableCellView {
       mark.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
       mark.contentTintColor = .secondaryLabelColor
     }
+  }
+}
+
+/// The Name column: a session's status mark or a group's symbol, then the title.
+final class NameCellView: NSTableCellView {
+  private let mark = RowStatusMark()
+
+  init() {
+    super.init(frame: .zero)
+    let label = cellLabel()
+
+    textField = label
+    addSubview(mark)
+    addSubview(label)
+
+    NSLayoutConstraint.activate([
+      mark.leadingAnchor.constraint(equalTo: leadingAnchor),
+      mark.centerYAnchor.constraint(equalTo: centerYAnchor),
+      label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
+      label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+      label.centerYAnchor.constraint(equalTo: centerYAnchor)
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("NameCellView is built in code") }
+
+  /// A session's row passes its status; a group's passes its symbol.
+  func show(title: String, status: RowStatus? = nil, symbol: String? = nil, isUnread: Bool = false, isDimmed: Bool = false) {
+    textField?.stringValue = title
+    textField?.textColor = isDimmed ? .secondaryLabelColor : .labelColor
+    toolTip = title
+    mark.show(status: status, symbol: symbol, isUnread: isUnread)
   }
 }
 

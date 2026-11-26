@@ -48,6 +48,28 @@ struct ProjectsModelTests {
     #expect(ids(query.groups(all)) == ["app: b", "lib: c"])
   }
 
+  @Test func historyListsArchivedAndSkipsBlankSessions() {
+    let all = projects([("app", [("a", 10), ("b", 5), ("c", 1)])])
+    all[0].sessions[0].isArchived = true
+    all[0].sessions[2].transcriptFile = nil
+    var query = ProjectsQuery()
+    query.showsArchived = true
+    query.sortOrder = [NSSortDescriptor(key: "updated", ascending: false)]
+
+    #expect(query.sessions(all[0].sessions, now: now).map(\.id) == ["b", "a"])
+  }
+
+  @Test func historyGroupsByDay() {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    // 2027-01-15 08:00 UTC, so 3 and 6 hours ago are today and 10 hours ago is yesterday.
+    let all = projects([("app", [("a", 3 * 60), ("b", 6 * 60), ("c", 10 * 60), ("d", 40 * 60)])])
+    let days = sessionsByDay(all[0].sessions, calendar: calendar)
+
+    #expect(days.map { $0.sessions.map(\.id) } == [["a", "b"], ["c"], ["d"]])
+    #expect(days.map { dayTitle($0.day, now: now, calendar: calendar) }.prefix(2) == ["Today", "Yesterday"])
+  }
+
   @Test func searchMatchesTitleOrProject() {
     let all = projects([("theseus", [("fix menus", 1)]), ("engine", [("loader", 2)])])
     var query = ProjectsQuery()
@@ -117,6 +139,24 @@ struct ProjectsModelTests {
     session.worktree = "feature"
     session.gitBranch = "main"
     #expect(session.location == "feature · main")
+  }
+
+  @Test func savedQueryRoundTripsWithoutSearch() {
+    var query = ProjectsQuery()
+    query.statuses = [.waiting, .failed]
+    query.updated = .week
+    query.showsArchived = true
+    query.search = "app"
+    query.sortOrder = [NSSortDescriptor(key: "title", ascending: true), NSSortDescriptor(key: "updated", ascending: false)]
+
+    let restored = ProjectsQuery(saved: query.saved)
+
+    #expect(restored.statuses == [.waiting, .failed])
+    #expect(restored.updated == .week)
+    #expect(restored.showsArchived)
+    #expect(restored.search == "")
+    #expect(restored.sortOrder.map { "\($0.key ?? "") \($0.ascending)" } == ["title true", "updated false"])
+    #expect(ProjectsQuery(saved: [:]).sortOrder == ProjectsQuery().sortOrder)
   }
 
   @Test func tallyCountsLiveStatuses() {

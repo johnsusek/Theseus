@@ -43,7 +43,9 @@ final class ProjectsOutlineView: NSOutlineView {
 final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSPopoverDelegate {
   unowned let app: AppDelegate
   let outline = ProjectsOutlineView()
-  var query = ProjectsQuery()
+  var query = ProjectsQuery(saved: UserDefaults.standard.dictionary(forKey: "ProjectsQuery") ?? [:]) {
+    didSet { UserDefaults.standard.set(query.saved, forKey: "ProjectsQuery") }
+  }
   /// The top level as shown.
   private(set) var groups: [GroupItem] = []
   private var groupItems: [String: GroupItem] = [:]
@@ -101,19 +103,7 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
   required init?(coder: NSCoder) { fatalError("ProjectsWindowController is built in code") }
 
   private func makeOutline() {
-    for column in ProjectsColumn.allCases {
-      let tableColumn = NSTableColumn(identifier: column.identifier)
-      let widths: [ProjectsColumn: (CGFloat, CGFloat)] = [.title: (200, 300), .status: (200, 320), .tasks: (70, 86), .changes: (60, 80), .context: (50, 60), .location: (90, 150), .updated: (70, 90)]
-
-      tableColumn.title = column.heading
-      tableColumn.minWidth = widths[column]?.0 ?? 60
-      tableColumn.width = widths[column]?.1 ?? 80
-      tableColumn.resizingMask = column == .title || column == .status ? [.autoresizingMask, .userResizingMask] : .userResizingMask
-      // The status sort puts what needs you first; Updated puts the newest first.
-      tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: column.rawValue, ascending: column != .updated && column != .changes && column != .context && column != .tasks)
-      tableColumn.isHidden = column == .context
-      outline.addTableColumn(tableColumn)
-    }
+    for column in ProjectsColumn.allCases { outline.addTableColumn(column.makeTableColumn()) }
 
     outline.outlineTableColumn = outline.tableColumns.first
     outline.style = .inset
@@ -232,27 +222,7 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
   private func configure(_ view: NSView, _ column: ProjectsColumn, _ item: Any) {
     if let group = item as? GroupItem { return configure(view, column, group) }
 
-    guard let session = item as? Session else { return }
-
-    switch column {
-    case .title:
-      (view as? NameCellView)?.show(title: session.rowTitle, status: session.rowStatus, isUnread: session.isUnread, isDimmed: session.isArchived)
-    case .status:
-      (view as? ActivityCellView)?.show(activity(of: session), request: session.request)
-    case .tasks:
-      (view as? TaskCellView)?.show(done: session.tasksDone, total: session.tasksTotal)
-    case .changes:
-      (view as? ChangesCellView)?.show(added: session.linesAdded, removed: session.linesRemoved, counts: !session.transcript.changedFiles.isEmpty)
-    case .context:
-      (view as? NSTableCellView)?.textField?.stringValue = session.contextFraction.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? ""
-    case .location:
-      // A pinned session is listed outside its project, so its location names the project.
-      let location = session.isPinned ? [session.project?.name ?? "", session.location].filter { !$0.isEmpty }.joined(separator: " · ") : session.location
-      (view as? NSTableCellView)?.textField?.stringValue = location
-      (view as? NSTableCellView)?.textField?.toolTip = session.workingDirectory.path
-    case .updated:
-      (view as? NSTableCellView)?.textField?.stringValue = updatedText(session.lastActive, now: .now)
-    }
+    if let session = item as? Session { configureCell(view, column, session) }
   }
 
   private func configure(_ view: NSView, _ column: ProjectsColumn, _ group: GroupItem) {
@@ -271,32 +241,6 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
       (view as? NSTableCellView)?.textField?.toolTip = path
     case .context, .updated:
       (view as? NSTableCellView)?.textField?.stringValue = ""
-    }
-  }
-
-  /// The request a waiting session asks, what a running one is doing, why a failed one stopped.
-  private func activity(of session: Session) -> String {
-    if let request = session.request {
-      if RequestKind(request) == .question { return request.questions.first?.question ?? "Asking a question" }
-
-      return PermissionPrompt(request, projectName: session.project?.name ?? "").title
-    }
-
-    guard let live = session.live else { return "" }
-
-    switch session.rowStatus {
-    case .waiting:
-      return "Waiting for approval"
-    case .running:
-      return activityLine(summary: live.activity, isWaiting: false, transcript: session.transcript)
-    case .failed:
-      if let failure = live.exit?.failure { return failure }
-
-      if let code = live.exit?.code, code != 0 { return "Exited with code \(code)" }
-
-      return "The last turn failed"
-    default:
-      return ""
     }
   }
 
@@ -321,26 +265,9 @@ final class ProjectsWindowController: NSWindowController, NSWindowDelegate, NSOu
   func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
     guard let tableColumn, let column = ProjectsColumn(rawValue: tableColumn.identifier.rawValue) else { return nil }
 
-    let view = outlineView.makeView(withIdentifier: tableColumn.identifier, owner: self) ?? makeCell(column)
+    let view = outlineView.makeView(withIdentifier: tableColumn.identifier, owner: self) ?? column.makeCell()
     configure(view, column, item)
     return view
-  }
-
-  private func makeCell(_ column: ProjectsColumn) -> NSView {
-    let cell: NSView
-
-    switch column {
-    case .title: cell = NameCellView()
-    case .status: cell = ActivityCellView()
-    case .tasks: cell = TaskCellView()
-    case .changes: cell = ChangesCellView()
-    case .context: cell = TextCellView(alignment: .right)
-    case .location: cell = TextCellView(truncation: .byTruncatingMiddle)
-    case .updated: cell = TextCellView()
-    }
-
-    cell.identifier = column.identifier
-    return cell
   }
 
   func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
