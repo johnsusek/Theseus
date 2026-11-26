@@ -12,12 +12,22 @@ enum FilePaths {
   static func target(ofLink link: Any, in base: URL) -> URL? {
     guard let string = (link as? URL)?.absoluteString ?? (link as? String) else { return nil }
 
-    if let url = URL(string: string), url.isFileURL { return url.standardizedFileURL }
+    // A code span such as `/Users/me/App/Foo.swift:42` arrives as a file URL whose path still carries the suffix.
+    if let url = URL(string: string), url.isFileURL {
+      let path = withoutLocation(url.path)
+      return path.isEmpty ? nil : URL(filePath: path).standardizedFileURL
+    }
 
     // `Package.swift:12` parses as a URL with the scheme `package.swift`, so only `scheme://` and `mailto:` links are web links.
     guard !string.contains("://"), !string.lowercased().hasPrefix("mailto:") else { return nil }
 
-    var path = string.removingPercentEncoding ?? string
+    let path = withoutLocation(string.removingPercentEncoding ?? string)
+    return path.isEmpty ? nil : resolve(path, in: base)
+  }
+
+  /// The path without a `#L12` fragment or a `:line` or `:line:column` suffix.
+  private static func withoutLocation(_ path: String) -> String {
+    var path = path
 
     if let hash = path.firstIndex(of: "#") { path = String(path[..<hash]) }
 
@@ -25,6 +35,6 @@ enum FilePaths {
       path = String(path[..<colon])
     }
 
-    return path.isEmpty ? nil : resolve(path, in: base)
+    return path
   }
 }

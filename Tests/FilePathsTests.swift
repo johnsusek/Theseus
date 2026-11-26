@@ -20,6 +20,8 @@ struct FilePathsTests {
     #expect(target(URL(string: "notes/my%20plan.md")!) == "/Users/me/project/notes/my plan.md")
     #expect(target("README.md") == "/Users/me/project/README.md")
     #expect(target(URL(filePath: "/tmp/a.md")) == "/tmp/a.md")
+    #expect(target(URL(filePath: "/tmp/a.swift:42")) == "/tmp/a.swift")
+    #expect(target(URL(filePath: "/tmp/a.swift#L12")) == "/tmp/a.swift")
   }
 
   @Test func webAndMailLinksAreLeftAlone() {
