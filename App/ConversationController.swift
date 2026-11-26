@@ -54,7 +54,6 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     let window = ConversationWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 520), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
     super.init(window: window)
 
-    window.titlebarAppearsTransparent = true
     window.isReleasedWhenClosed = false
     // Quit and Keep Windows, or the system's setting to keep windows, brings the tab back with its conversation.
     window.isRestorable = true
