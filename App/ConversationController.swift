@@ -33,10 +33,10 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
   private var closingClick: (chip: NSView, event: Int)?
   /// How many of the session's issues are already in the log.
   private var loggedIssues = 0
-  private var preview: PreviewWindowController?
+  private(set) lazy var preview = Preview(conversation: self)
   private(set) lazy var browser = Browser(conversation: self)
-  /// How much wider the window got to make room for the browser's pane, given back when the pane closes.
-  private var browserGrowth = 0.0
+  /// How much wider the window got to make room for each side pane, given back when the pane closes.
+  private var paneGrowth: [SidePane: Double] = [:]
   private var linkPopover: NSPopover?
   /// Counts the times the start page started watching the workspace, so only the newest pass runs.
   private var startPageWatch = 0
@@ -791,50 +791,46 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     linkPopover = popover
   }
 
-    func showPreview(of url: URL) {
-    let controller = preview ?? PreviewWindowController()
-
-    preview = controller
-    controller.show(url)
-  }
-
-  // MARK: Browser
+  // MARK: Side panes
 
   /// The folder a file page may read, and relative addresses resolve in.
   var browserFolder: URL { session?.workingDirectory ?? project }
 
-  /// Opens the browser's pane. The window grows to its right by the pane's width, as far as its screen allows, so the transcript keeps its width.
-  func showBrowserPane(_ controller: NSViewController) {
-    guard let window, !split.showsBrowser else { return }
+  /// Opens a side pane. The window grows to its right by the pane's width, as far as its screen allows, so the transcript keeps its width.
+  func showPane(_ controller: NSViewController, in pane: SidePane) {
+    guard let window, !split.isShowing(pane) else { return }
 
     if let visible = window.screen?.visibleFrame {
       var frame = window.frame
+      let growth = max(0, min(pane.width, visible.width - frame.width))
 
-      browserGrowth = max(0, min(split.browserWidth, visible.width - frame.width))
-      frame.size.width += browserGrowth
+      paneGrowth[pane] = growth
+      frame.size.width += growth
       frame.origin.x = max(visible.minX, min(frame.origin.x, visible.maxX - frame.width))
       window.setFrame(frame, display: true)
     }
 
-    split.showBrowser(controller)
+    split.show(controller, in: pane)
   }
 
-  func hideBrowserPane() {
-    guard let window, split.showsBrowser else { return }
+  func hidePane(_ pane: SidePane) {
+    guard let window, split.isShowing(pane) else { return }
 
-    split.hideBrowser()
-    window.setFrame(NSRect(origin: window.frame.origin, size: NSSize(width: window.frame.width - browserGrowth, height: window.frame.height)), display: true)
-    browserGrowth = 0
+    split.hide(pane)
+    window.setFrame(NSRect(origin: window.frame.origin, size: NSSize(width: window.frame.width - (paneGrowth[pane] ?? 0), height: window.frame.height)), display: true)
+    paneGrowth[pane] = nil
   }
 
-  /// Browser commands from the menu bar and the pane's buttons reach the browser from this window.
+  /// Browser and preview commands from the menu bar and the panes' buttons reach them from this window.
   override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
-    browser.responds(to: action) ? browser : super.supplementalTarget(forAction: action, sender: sender)
-  }
+    if browser.responds(to: action) { return browser }
+    if preview.responds(to: action) { return preview }
 
+    return super.supplementalTarget(forAction: action, sender: sender)
+  }
   func windowWillClose(_ notification: Notification) {
     isClosed = true
-    preview?.close()
+    preview.close()
     browser.close()
     app.closed(self)
 

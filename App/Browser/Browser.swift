@@ -115,9 +115,9 @@ final class Browser: NSObject, NSMenuItemValidation {
 
     if isShown && !isDetached {
       windowController.window?.orderOut(nil)
-      conversation.showBrowserPane(viewController)
+      conversation.showPane(viewController, in: .browser)
     } else {
-      conversation.hideBrowserPane()
+      conversation.hidePane(.browser)
       windowController.host(viewController)
 
       if isShown { windowController.window?.orderFront(nil) } else { windowController.window?.orderOut(nil) }

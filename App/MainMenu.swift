@@ -115,6 +115,8 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
       .separator(),
       item("Show Browser", #selector(Browser.toggleBrowser(_:)), "b", [.command, .option]),
       item("Detach Browser", #selector(Browser.toggleBrowserDetached(_:))),
+      item("Show Preview", #selector(Preview.togglePreview(_:))),
+      item("Detach Preview", #selector(Preview.togglePreviewDetached(_:))),
       .separator(),
       item("Show Archived Sessions", #selector(ProjectsWindowController.toggleArchivedSessions(_:))),
       menu("Filter", [item("All Sessions", #selector(ProjectsWindowController.filterSessions(_:)), tag: -1), .separator()]

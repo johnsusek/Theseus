@@ -540,40 +540,52 @@ private func sidebarLabel(_ color: NSColor = .labelColor) -> NSTextField {
   return label
 }
 
-/// A conversation window's content: the session sidebar, the conversation, and the browser's pane while the browser is shown attached.
+/// A side pane of a conversation window, in the order the panes sit left to right.
+enum SidePane: String, CaseIterable {
+  case preview = "Preview", browser = "Browser"
+
+  /// The width the pane opens at: the last one it was dragged to.
+  var width: Double { UserDefaults.standard.object(forKey: "\(rawValue)PaneWidth") as? Double ?? (self == .browser ? 520 : 480) }
+
+  func save(width: Double) { UserDefaults.standard.set(width, forKey: "\(rawValue)PaneWidth") }
+}
+
+/// A conversation window's content: the session sidebar, the conversation, and the side panes shown attached, next to each other.
 /// Showing or hiding the sidebar does the same in every tab of the window, so switching tabs leaves it in place, and new windows start
 /// the way it was left.
 final class ConversationSplitController: NSSplitViewController {
   static let showsSidebarKey = "ShowsSidebar"
-  private static let browserWidthKey = "BrowserPaneWidth"
   let sidebar = SessionSidebar()
   private let sidebarItem: NSSplitViewItem
-  private let browserPane = NSViewController()
-  private let browserItem: NSSplitViewItem
-  var showsBrowser: Bool { !browserItem.isCollapsed }
-  /// The width the browser's pane opens at: the last one it was dragged to.
-  var browserWidth: Double { UserDefaults.standard.object(forKey: Self.browserWidthKey) as? Double ?? 520 }
+  private let side = NSViewController()
+  private let sideSplit = NSSplitView()
+  private let sideItem: NSSplitViewItem
+  private var shown: [SidePane: NSViewController] = [:]
   /// The first window's sidebar starts 240 pt wide once the split view has a width; later ones take the last width set.
   private var placesSidebar = false
 
+  func isShowing(_ pane: SidePane) -> Bool { shown[pane] != nil }
+
   init(content: NSView) {
     sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-    browserPane.view = NSView()
-    browserItem = NSSplitViewItem(viewController: browserPane)
+    sideSplit.isVertical = true
+    sideSplit.dividerStyle = .thin
+    side.view = sideSplit
+    sideItem = NSSplitViewItem(viewController: side)
     super.init(nibName: nil, bundle: nil)
     let conversation = NSViewController()
     conversation.view = content
     let conversationItem = NSSplitViewItem(viewController: conversation)
     sidebarItem.minimumThickness = 180
     sidebarItem.maximumThickness = 360
-    // A wider window widens the browser, not the transcript.
+    // A wider window widens the side panes, not the transcript.
     conversationItem.holdingPriority = .defaultLow + 10
-    browserItem.minimumThickness = 320
-    browserItem.canCollapse = true
-    browserItem.isCollapsed = true
+    sideItem.minimumThickness = 320
+    sideItem.canCollapse = true
+    sideItem.isCollapsed = true
     addSplitViewItem(sidebarItem)
     addSplitViewItem(conversationItem)
-    addSplitViewItem(browserItem)
+    addSplitViewItem(sideItem)
   }
 
   @available(*, unavailable)
@@ -584,35 +596,54 @@ final class ConversationSplitController: NSSplitViewController {
     splitView.autosaveName = "ConversationSplit"
     placesSidebar = UserDefaults.standard.object(forKey: "NSSplitView Subview Frames ConversationSplit") == nil
     sidebarItem.isCollapsed = !(UserDefaults.standard.object(forKey: Self.showsSidebarKey) as? Bool ?? true)
-    // The saved frames may say the pane was open; a new window has no browser to show in it.
-    browserItem.isCollapsed = true
+    // The saved frames may say a pane was open; a new window has nothing to show in it.
+    sideItem.isCollapsed = true
   }
 
-  /// Opens the pane on the browser's view, `browserWidth` wide.
-  func showBrowser(_ controller: NSViewController) {
-    guard controller.parent !== browserPane else { return }
+  /// Opens `pane` on `controller`'s view at the pane's last width, keeping the other pane's width.
+  func show(_ controller: NSViewController, in pane: SidePane) {
+    guard shown[pane] !== controller else { return }
 
+    saveWidths()
+    controller.removeFromParent()
     controller.view.removeFromSuperview()
-    controller.view.translatesAutoresizingMaskIntoConstraints = false
-    browserPane.addChild(controller)
-    browserPane.view.addSubview(controller.view)
+    controller.view.translatesAutoresizingMaskIntoConstraints = true
+    side.addChild(controller)
+    shown[pane] = controller
+    arrange()
+  }
 
-    NSLayoutConstraint.activate([
-      controller.view.topAnchor.constraint(equalTo: browserPane.view.topAnchor), controller.view.bottomAnchor.constraint(equalTo: browserPane.view.bottomAnchor),
-      controller.view.leadingAnchor.constraint(equalTo: browserPane.view.leadingAnchor), controller.view.trailingAnchor.constraint(equalTo: browserPane.view.trailingAnchor)
-    ])
+  /// Closes `pane` and remembers how wide it was dragged.
+  func hide(_ pane: SidePane) {
+    guard let controller = shown[pane] else { return }
 
-    let width = browserWidth
+    saveWidths()
+    controller.view.removeFromSuperview()
+    controller.removeFromParent()
+    shown[pane] = nil
+    arrange()
+  }
 
-    browserItem.isCollapsed = false
+  private func saveWidths() {
+    for (pane, controller) in shown where controller.view.frame.width > 0 { pane.save(width: controller.view.frame.width) }
+  }
+
+  private func arrange() {
+    let panes = SidePane.allCases.filter { shown[$0] != nil }
+
+    for (index, pane) in panes.enumerated() where sideSplit.arrangedSubviews.firstIndex(of: shown[pane]!.view) != index {
+      sideSplit.insertArrangedSubview(shown[pane]!.view, at: index)
+    }
+
+    sideItem.isCollapsed = panes.isEmpty
+    guard !panes.isEmpty else { return }
+
+    let width = panes.reduce(0) { $0 + $1.width } + Double(panes.count - 1) * sideSplit.dividerThickness
+
     splitView.layoutSubtreeIfNeeded()
     splitView.setPosition(splitView.bounds.width - width - splitView.dividerThickness, ofDividerAt: 1)
-  }
-
-  /// Closes the pane and remembers how wide it was dragged.
-  func hideBrowser() {
-    UserDefaults.standard.set(browserPane.view.frame.width, forKey: Self.browserWidthKey)
-    browserItem.isCollapsed = true
+    sideSplit.layoutSubtreeIfNeeded()
+    if panes.count == 2 { sideSplit.setPosition(SidePane.preview.width, ofDividerAt: 0) }
   }
 
   override func viewDidLayout() {

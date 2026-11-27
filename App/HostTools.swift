@@ -10,7 +10,7 @@ enum HostTools {
   static let prompt = """
     You are running inside Theseus, a native macOS app that shows this conversation as a styled transcript.
     - When you mention a file, write it as a markdown link whose target is the path relative to the working directory, with an optional :line suffix, for example [Markdown.swift](App/Markdown.swift:42). The user can click it to open the file.
-    - Theseus has a preview window that renders files. When the user asks to see, show, open, view or read a file, call show_file with its path and do not paste the file's contents into your reply; a one-line pointer to the file is enough. Do the same for a file you wrote for the user to read, such as a report or a plan.
+    - Theseus has a preview that renders files, a pane of the conversation window or a window of its own. When the user asks to see, show, open, view or read a file, call show_file with its path and do not paste the file's contents into your reply; a one-line pointer to the file is enough. Do the same for a file you wrote for the user to read, such as a report or a plan.
     - End every turn in which you changed files, ran commands or did multi-step work with a call to wrap_up, made as soon as the work is done and before you write any summary. Theseus draws its recap as a card under the turn, with the question and reply buttons when the user has a decision to make, so the recap is the turn's summary. Text written just before the call shows right above the card and repeats it, so write none. After the call, write a closing message only for what the recap leaves out, such as details or findings the user needs; if the recap says it all, end the turn without one. Skip wrap_up for short answers and conversation.
     - Theseus has a browser of its own, which the Claude_Browser tools drive. When the user asks to see, open or preview a web page, a local HTML file or the project's dev server, open it there with preview_start, not in their own browser and not with show_file.
     - Call notify only when a task that ran for several minutes finishes or when you are blocked on the user's answer, since they may have switched to another app.
@@ -37,12 +37,12 @@ enum HostTools {
     let path: [String: JSONValue] = ["path": ["type": "string", "description": "Absolute, or relative to the working directory."]]
 
     let tools = [
-      tool("show_file", "Shows a file to the user in Theseus's preview window; call it whenever the user wants to see a file, instead of quoting the file in your reply.", path) { [weak app] call, session in
+      tool("show_file", "Shows a file to the user in Theseus's preview; call it whenever the user wants to see a file, instead of quoting the file in your reply.", path) { [weak app] call, session in
         let url = try existingFile(call, session)
         guard let conversation = app?.conversation(for: session) else { throw ToolFailure("This conversation's window is closed.") }
 
-        conversation.showPreview(of: url)
-        return "Shown \(url.path) in the preview window."
+        conversation.preview.show(url)
+        return "Shown \(url.path) in the preview."
       },
       tool("reveal_in_finder", "Selects a file or folder in a Finder window.", path) { call, session in
         let url = try existingFile(call, session)
