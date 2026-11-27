@@ -128,14 +128,3 @@ final class BrowserViewController: NSViewController, NSTextFieldDelegate {
   }
 }
 
-/// A borderless symbol button whose action goes to the responder chain, where the window controller hands it to the browser.
-@MainActor
-private func barButton(_ symbol: String, _ label: String, _ action: Selector) -> NSButton {
-  let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: label) ?? NSImage(), target: nil, action: action)
-
-  button.isBordered = false
-  button.toolTip = label
-  button.setAccessibilityLabel(label)
-  button.setContentHuggingPriority(.required, for: .horizontal)
-  return button
-}

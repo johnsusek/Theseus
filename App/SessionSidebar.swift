@@ -542,10 +542,18 @@ private func sidebarLabel(_ color: NSColor = .labelColor) -> NSTextField {
 
 /// A side pane of a conversation window, in the order the panes sit left to right.
 enum SidePane: String, CaseIterable {
-  case preview = "Preview", browser = "Browser"
+  case preview = "Preview", browser = "Browser", desktop = "Desktop"
 
   /// The width the pane opens at: the last one it was dragged to.
-  var width: Double { UserDefaults.standard.object(forKey: "\(rawValue)PaneWidth") as? Double ?? (self == .browser ? 520 : 480) }
+  var width: Double { UserDefaults.standard.object(forKey: "\(rawValue)PaneWidth") as? Double ?? defaultWidth }
+
+  private var defaultWidth: Double {
+    switch self {
+    case .preview: 480
+    case .browser: 520
+    case .desktop: 560
+    }
+  }
 
   func save(width: Double) { UserDefaults.standard.set(width, forKey: "\(rawValue)PaneWidth") }
 }
@@ -643,7 +651,13 @@ final class ConversationSplitController: NSSplitViewController {
     splitView.layoutSubtreeIfNeeded()
     splitView.setPosition(splitView.bounds.width - width - splitView.dividerThickness, ofDividerAt: 1)
     sideSplit.layoutSubtreeIfNeeded()
-    if panes.count == 2 { sideSplit.setPosition(SidePane.preview.width, ofDividerAt: 0) }
+    var position = 0.0
+
+    for (index, pane) in panes.dropLast().enumerated() {
+      position += pane.width
+      sideSplit.setPosition(position, ofDividerAt: index)
+      position += sideSplit.dividerThickness
+    }
   }
 
   override func viewDidLayout() {

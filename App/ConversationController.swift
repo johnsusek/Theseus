@@ -821,10 +821,11 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     paneGrowth[pane] = nil
   }
 
-  /// Browser and preview commands from the menu bar and the panes' buttons reach them from this window.
+  /// Browser, preview and Private Desktop commands from the menu bar and the panes' buttons reach them from this window.
   override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
     if browser.responds(to: action) { return browser }
     if preview.responds(to: action) { return preview }
+    if app.desktopPane.responds(to: action) { return app.desktopPane }
 
     return super.supplementalTarget(forAction: action, sender: sender)
   }

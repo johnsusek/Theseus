@@ -7,7 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   let workspace: Workspace
   let previewServers = PreviewServers()
   let privateDesktop = PrivateDesktop(accounts: DesktopTools.readAccounts)
-  private lazy var desktopWindow = DesktopWindowController(desktop: privateDesktop)
+  private(set) lazy var desktopPane = DesktopPane(desktop: privateDesktop)
   private var conversations: [ConversationController] = []
   private let sessionMenus = SessionMenuDelegate()
   private var projectPanel: NSOpenPanel?
@@ -199,11 +199,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   func closed(_ controller: ConversationController) {
     conversations.removeAll { $0 === controller }
     if let session = controller.session { privateDesktop.release(session) }
+    desktopPane.closed(controller)
   }
 
-  /// Window > Private Desktop.
+  /// Window > Private Desktop and a conversation's desktop chip: in the sender's conversation, or the front one.
   @objc func showPrivateDesktop(_ sender: Any?) {
-    desktopWindow.showWindow(sender)
+    let window = (sender as? NSView)?.window ?? NSApp.mainWindow
+    desktopPane.show(in: window?.windowController as? ConversationController)
   }
 
   /// File > New Conversation with no project window in front: the last project, or the Open Project panel.

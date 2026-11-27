@@ -227,8 +227,9 @@ final class PreviewViewController: NSViewController, WKNavigationDelegate, NSSea
 }
 
 /// A borderless symbol button whose action goes to the responder chain, where the window hands it to the preview.
+/// A borderless symbol button for a pane's bar, sent up the responder chain.
 @MainActor
-private func barButton(_ symbol: String, _ label: String, _ action: Selector) -> NSButton {
+func barButton(_ symbol: String, _ label: String, _ action: Selector) -> NSButton {
   let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: label) ?? NSImage(), target: nil, action: action)
 
   button.isBordered = false
