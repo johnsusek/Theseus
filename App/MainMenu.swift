@@ -119,6 +119,7 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
       item("Detach Preview", #selector(Preview.togglePreviewDetached(_:))),
       item("Show Private Desktop", #selector(DesktopPane.togglePrivateDesktop(_:))),
       item("Detach Private Desktop", #selector(DesktopPane.togglePrivateDesktopDetached(_:))),
+      item("Enter Picture in Picture", #selector(DesktopPane.togglePictureInPicture(_:))),
       .separator(),
       item("Show Archived Sessions", #selector(ProjectsWindowController.toggleArchivedSessions(_:))),
       menu("Filter", [item("All Sessions", #selector(ProjectsWindowController.filterSessions(_:)), tag: -1), .separator()]

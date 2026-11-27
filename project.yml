@@ -110,6 +110,7 @@ targets:
       - path: App/MarkdownPage.swift
       - path: App/CodeHighlighter.swift
       - path: App/Desktop/DesktopChecks.swift
+      - path: App/Desktop/DesktopScreenView.swift
       - path: App/Desktop/PrivateDesktop.swift
       - path: App/PermissionPrompt.swift
       - path: App/ProjectsModel.swift

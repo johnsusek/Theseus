@@ -16,6 +16,7 @@ final class DesktopPane: NSObject, NSWindowDelegate, NSMenuItemValidation {
   init(desktop: PrivateDesktop) {
     viewController = DesktopViewController(desktop: desktop)
     super.init()
+    viewController.onRestore = { [weak self] in self?.show(in: self?.frontConversation) }
     keepCurrent(self) { pane in pane.window?.title = pane.viewController.heading }
   }
 
@@ -101,6 +102,11 @@ final class DesktopPane: NSObject, NSWindowDelegate, NSMenuItemValidation {
     show(in: frontConversation)
   }
 
+  /// View > Enter Picture in Picture: the system's floating window, which stays on top across apps and Spaces.
+  @objc func togglePictureInPicture(_ sender: Any?) {
+    viewController.togglePictureInPicture()
+  }
+
   @objc func togglePrivateDesktopDetached(_ sender: Any?) {
     UserDefaults.standard.set(!isDetached, forKey: Self.detachedKey)
     show(in: frontConversation)
@@ -112,6 +118,9 @@ final class DesktopPane: NSObject, NSWindowDelegate, NSMenuItemValidation {
       menuItem.title = isShown ? "Hide Private Desktop" : "Show Private Desktop"
     case #selector(togglePrivateDesktopDetached(_:)):
       menuItem.title = isDetached ? "Attach Private Desktop" : "Detach Private Desktop"
+    case #selector(togglePictureInPicture(_:)):
+      menuItem.title = viewController.isInPictureInPicture ? "Exit Picture in Picture" : "Enter Picture in Picture"
+      return viewController.canTogglePictureInPicture
     default:
       break
     }

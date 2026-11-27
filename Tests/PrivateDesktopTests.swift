@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import Foundation
 import StagehandShared
@@ -121,6 +122,18 @@ struct PrivateDesktopTests {
     #expect(!DesktopChecks.isUniform(stripes(colors: [.white, .black])))
     #expect(DesktopChecks.pointerReadsBack("requested 400,300 read 400,300"))
     #expect(!DesktopChecks.pointerReadsBack("requested 400,300 read -1,-1"))
+  }
+
+  @Test func framesBecomeSampleBuffersShownAtOnce() throws {
+    let bitmap = NSBitmapImageRep(data: stripes(colors: [.white, .black]))!
+    let jpeg = try #require(bitmap.representation(using: .jpeg, properties: [:]))
+    let buffer = try #require(DesktopScreenView.sampleBuffer(jpeg))
+    let dimensions = CMVideoFormatDescriptionGetDimensions(try #require(buffer.formatDescription))
+    #expect(dimensions.width == 64 && dimensions.height == 64)
+
+    let attachments = try #require(CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: false) as? [[CFString: Any]])
+    #expect(attachments.first?[kCMSampleAttachmentKey_DisplayImmediately] as? Bool == true)
+    #expect(DesktopScreenView.sampleBuffer(Data("not a picture".utf8)) == nil)
   }
 
   @Test func turnsOnWhenEveryItemPasses() async {

@@ -1,19 +1,28 @@
+import AVKit
 import AppKit
 import StagehandShared
 
 /// The Private Desktop's view, the same in a conversation's pane and in its own window: a bar, then the setup checklist until every
-/// item passes, and after that its screen, scaled to fit and streamed while the view shows.
+/// item passes, and after that its screen, scaled to fit and streamed while the view shows or picture in picture has it.
 @MainActor
-final class DesktopViewController: NSViewController {
+final class DesktopViewController: NSViewController, AVPictureInPictureControllerDelegate, AVPictureInPictureSampleBufferPlaybackDelegate {
   private let desktop: PrivateDesktop
   private let name = NSTextField(labelWithString: "Private Desktop")
   private let takeOver = NSButton(title: "Take Over", target: nil, action: nil)
   private let placement = barButton("macwindow.on.rectangle", "Detach Private Desktop", #selector(DesktopPane.togglePrivateDesktopDetached(_:)))
+  private let pictureButton = barButton("pip.enter", "Enter Picture in Picture", #selector(DesktopPane.togglePictureInPicture(_:)))
   private let checklist = NSStackView()
   private var rows: [DesktopItem: (icon: NSImageView, fix: NSTextField)] = [:]
   private let checkAgain = NSButton(title: "Check Again", target: nil, action: nil)
-  private let screen = NSImageView()
+  private let screen = DesktopScreenView()
   private var stream: Task<Void, Never>?
+  private var picture: AVPictureInPictureController?
+  private var possible: NSKeyValueObservation?
+  private(set) var isInPictureInPicture = false
+  /// Brings the view back on screen when picture in picture ends with its restore button.
+  var onRestore: (() -> Void)?
+
+  var canTogglePictureInPicture: Bool { isInPictureInPicture || picture?.isPictureInPicturePossible == true }
 
   init(desktop: PrivateDesktop) {
     self.desktop = desktop
@@ -25,7 +34,7 @@ final class DesktopViewController: NSViewController {
 
   override func loadView() {
     let close = barButton("xmark", "Hide Private Desktop", #selector(DesktopPane.hidePrivateDesktop(_:)))
-    let bar = NSStackView(views: [name, takeOver, placement, close])
+    let bar = NSStackView(views: [name, takeOver, pictureButton, placement, close])
     let rule = NSBox()
     let body = NSView()
     let column = NSStackView(views: [bar, rule, body])
@@ -47,18 +56,8 @@ final class DesktopViewController: NSViewController {
     column.spacing = 0
     column.translatesAutoresizingMaskIntoConstraints = false
 
-    // The frames' own size must not size the view, or the pane and the window could not shrink below the screen's points.
-    screen.imageScaling = .scaleProportionallyUpOrDown
-    screen.wantsLayer = true
-    screen.layer?.backgroundColor = NSColor.black.cgColor
-    screen.setAccessibilityLabel("Private Desktop screen")
-
-    for orientation in [NSLayoutConstraint.Orientation.horizontal, .vertical] {
-      screen.setContentHuggingPriority(.init(1), for: orientation)
-      screen.setContentCompressionResistancePriority(.init(1), for: orientation)
-    }
-
     buildChecklist()
+    setUpPictureInPicture()
 
     for part in [screen, checklist] as [NSView] {
       part.translatesAutoresizingMaskIntoConstraints = false
@@ -126,6 +125,7 @@ final class DesktopViewController: NSViewController {
     screen.isHidden = !isOn
     checklist.isHidden = isOn
     takeOver.isHidden = !isOn
+    pictureButton.isHidden = !isOn || picture == nil
     takeOver.title = desktop.isTakenByUser ? "Hand Back" : "Take Over"
     name.stringValue = heading
     checkAgain.isEnabled = !desktop.isChecking
@@ -176,7 +176,7 @@ final class DesktopViewController: NSViewController {
 
   /// Streams frames only while the screen shows in a visible window.
   private func streamIfVisible() {
-    let visible = desktop.isOn && view.window?.occlusionState.contains(.visible) == true
+    let visible = desktop.isOn && (isInPictureInPicture || view.window?.occlusionState.contains(.visible) == true)
 
     if !visible {
       stream?.cancel()
@@ -191,7 +191,7 @@ final class DesktopViewController: NSViewController {
         for try await frame in Stagehand.stream(socket: socket) {
           guard let self, !Task.isCancelled else { return }
 
-          screen.image = NSImage(data: frame)
+          screen.show(frame)
         }
       } catch {
         log.error("Private Desktop stream ended: \(error)")
@@ -201,6 +201,74 @@ final class DesktopViewController: NSViewController {
       if !Task.isCancelled { self?.stream = nil }
     }
   }
+
+  // MARK: Picture in picture
+
+  private func setUpPictureInPicture() {
+    guard AVPictureInPictureController.isPictureInPictureSupported() else { return }
+
+    let controller = AVPictureInPictureController(contentSource: .init(sampleBufferDisplayLayer: screen.displayLayer, playbackDelegate: self))
+    controller.delegate = self
+    controller.requiresLinearPlayback = true
+    picture = controller
+    possible = controller.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] _, _ in
+      MainActor.assumeIsolated { self?.showPictureButton() }
+    }
+  }
+
+  private func showPictureButton() {
+    let label = isInPictureInPicture ? "Exit Picture in Picture" : "Enter Picture in Picture"
+
+    pictureButton.image = NSImage(systemSymbolName: isInPictureInPicture ? "pip.exit" : "pip.enter", accessibilityDescription: label)
+    pictureButton.toolTip = label
+    pictureButton.setAccessibilityLabel(label)
+    pictureButton.isEnabled = canTogglePictureInPicture
+  }
+
+  func togglePictureInPicture() {
+    guard let picture else { return }
+
+    if picture.isPictureInPictureActive { picture.stopPictureInPicture() } else { picture.startPictureInPicture() }
+  }
+
+  nonisolated func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+    MainActor.assumeIsolated {
+      isInPictureInPicture = true
+      showPictureButton()
+    }
+  }
+
+  nonisolated func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
+    MainActor.assumeIsolated {
+      isInPictureInPicture = false
+      showPictureButton()
+      streamIfVisible()
+    }
+  }
+
+  nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: any Error) {
+    log.error("Picture in picture did not start: \(error.localizedDescription)")
+  }
+
+  nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+    MainActor.assumeIsolated { onRestore?() }
+    completionHandler(true)
+  }
+
+  // A live screen has no timeline to scrub and no pause.
+  nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController, setPlaying playing: Bool) {}
+
+  nonisolated func pictureInPictureControllerTimeRangeForPlayback(_ controller: AVPictureInPictureController) -> CMTimeRange { CMTimeRange(start: .negativeInfinity, duration: .positiveInfinity) }
+
+  nonisolated func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool { false }
+
+  nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
+
+  nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController, skipByInterval skipInterval: CMTime, completion completionHandler: @escaping () -> Void) {
+    completionHandler()
+  }
+
+  // MARK: Actions
 
   @objc private func checkAgain(_ sender: Any?) {
     Task { await desktop.check() }
