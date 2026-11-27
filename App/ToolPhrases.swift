@@ -62,6 +62,15 @@ private let readPagePhrase = ToolPhrase("Read page", "Reading page", "Could not 
 
 private let browserPhrases: [String: ToolPhrase] = [
   "preview_start": ToolPhrase("Started preview", "Starting preview", "Could not start preview", "started preview", "started %d previews"),
+  "preview_stop": ToolPhrase("Stopped preview", "Stopping preview", "Could not stop preview", "stopped preview", "stopped %d previews"),
+  "preview_list": ToolPhrase("Listed previews", "Listing previews", "Could not list previews", "listed previews", "listed previews"),
+  "preview_logs": ToolPhrase("Read preview log", "Reading preview log", "Could not read preview log", "read preview log", "read preview log"),
+  "read_console_messages": ToolPhrase("Read console", "Reading console", "Could not read console", "read console", "read console"),
+  "read_network_requests": ToolPhrase("Read requests", "Reading requests", "Could not read requests", "read requests", "read requests"),
+  "tabs_context": ToolPhrase("Listed tabs", "Listing tabs", "Could not list tabs", "listed tabs", "listed tabs"),
+  "tabs_create": ToolPhrase("Opened tab", "Opening tab", "Could not open tab", "opened tab", "opened %d tabs"),
+  "tabs_select": ToolPhrase("Switched tab", "Switching tab", "Could not switch tab", "switched tab", "switched tab"),
+  "tabs_close": ToolPhrase("Closed tab", "Closing tab", "Could not close tab", "closed tab", "closed %d tabs"),
   "navigate": ToolPhrase("Opened page", "Opening page", "Could not open page", "opened page", "opened %d pages"),
   "javascript_tool": ToolPhrase("Ran page script", "Running page script", "Could not run page script", "ran page script", "ran %d page scripts"),
   "find": ToolPhrase("Found", "Finding", "Could not find", "found", "found"),
@@ -78,6 +87,7 @@ private let browserPhrases: [String: ToolPhrase] = [
   "computer/key": ToolPhrase("Pressed key", "Pressing key", "Could not press key", "pressed key", "pressed keys"),
   "computer/scroll": ToolPhrase("Scrolled", "Scrolling", "Could not scroll", "scrolled", "scrolled"),
   "computer/scroll_to": ToolPhrase("Scrolled", "Scrolling", "Could not scroll", "scrolled", "scrolled"),
+  "computer/left_click_drag": ToolPhrase("Dragged", "Dragging", "Could not drag", "dragged", "dragged"),
   "computer/hover": ToolPhrase("Hovered", "Hovering", "Could not hover", "hovered", "hovered"),
   "computer/wait": ToolPhrase("Waited", "Waiting", "Could not wait", "waited", "waited")
 ]

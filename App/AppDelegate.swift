@@ -5,6 +5,7 @@ import UserNotifications
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   let workspace: Workspace
+  let previewServers = PreviewServers()
   private var conversations: [ConversationController] = []
   private let sessionMenus = SessionMenuDelegate()
   private var projectPanel: NSOpenPanel?
@@ -118,6 +119,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     return .terminateLater
   }
+
+  /// Dev servers the browser started end with the app.
+  func applicationWillTerminate(_ notification: Notification) { previewServers.stopAll() }
 
   // MARK: Projects
 

@@ -418,6 +418,27 @@ struct TranscriptBuilderTests {
     #expect(shown == ["prompt(Go)", "tool(Ran a command)", "question(Which wallpaper? = Vivid)", "tool(Read sheet.png)", "reply(The crops)", "image(crops.png)", "tool(Asked \u{201C}Gradient\u{201D})"])
   }
 
+  @Test func openedPageShowsACardAboveItsCalls() throws {
+    let picture = Data([1, 2, 3]).base64EncodedString()
+    let loaded: JSONValue = ["type": "user", "uuid": "r-p1", "timestamp": "2026-11-20T10:00:02.000Z", "message": ["content": [["type": "tool_result", "tool_use_id": "p1", "content": [
+      ["type": "text", "text": "site is running as server-1. Loaded http://localhost:8770/perspective.html (Photos Drive (Perspective)).\nThe user sees it in the browser."],
+      ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": .string(picture)]]
+    ]]]], "parent_tool_use_id": nil]
+    var builder = makeBuilder()
+    let elements = builder.elements(for: TranscriptInput(transcript: try transcript([
+      prompt("Open the editor"),
+      call("p1", "mcp__Claude_Browser__preview_start", ["name": "site"]), loaded,
+      call("c1", "mcp__Claude_Browser__read_console_messages"), returned("c1", "The console is empty."),
+      call("p2", "mcp__Claude_Browser__preview_start", ["name": "gone"]), returned("p2", "launch.json has no configuration named gone.", isError: true)
+    ]), streaming: [], isLive: false))
+
+    #expect(elements.map(\.shape) == ["prompt(Open the editor)", "page(Photos Drive (Perspective), localhost:8770)", "group(Started 2 previews, read console, 1 failed)"])
+    guard case .page(let page) = elements[1].kind else { return }
+
+    #expect(page.address == "http://localhost:8770/perspective.html")
+    #expect(page.thumbnail?.data == Data([1, 2, 3]))
+  }
+
   @Test func summaryNamesALoneReadAndPutsSkillsLast() throws {
     let shown = shapes(try transcript([
       prompt("Go"),

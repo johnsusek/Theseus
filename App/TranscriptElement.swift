@@ -115,6 +115,8 @@ struct TranscriptElement: Equatable, Identifiable {
     case image(SentImage)
     /// ReportFindings' findings in a bordered card.
     case review(ReviewCard)
+    /// A page the browser opened, with a button that brings it up.
+    case page(PageCard)
     /// An earlier turn's next-step question, which opens to show its recap.
     case ask(String, isExpanded: Bool)
     case tasks([PlanStep])
@@ -158,6 +160,32 @@ struct SentImage: Equatable {
   var path: String
 }
 
+/// A page the browser's `preview_start` opened: its title, its address, and the picture of it the call returned.
+struct PageCard: Equatable {
+  var title: String
+  var address: String
+  var thumbnail: Thumbnail?
+
+  /// What goes under the title: the site, or a file's name.
+  var place: String {
+    guard let url = URL(string: address) else { return address }
+
+    return url.isFileURL ? url.lastPathComponent : [url.host(), url.port.map(String.init)].compactMap(\.self).joined(separator: ":")
+  }
+}
+
+extension PageCard {
+  /// Nil for a call that loaded no page. The call reports the page as "Loaded <address> (<title>)."
+  init?(id: String, call: ToolCall) {
+    guard call.status == .completed, let loaded = call.result?.text.firstMatch(of: /Loaded (\S+) \((.*)\)\.(?:\n|$)/) else { return nil }
+
+    address = String(loaded.1)
+    title = String(loaded.2)
+
+    for case .image(.base64(let data, _)) in call.result ?? [] { thumbnail = thumbnail ?? Thumbnail(id: "\(id)/page", data: data) }
+  }
+}
+
 /// A code review's findings: "High effort, 6 findings", then each finding, grouped by file in the order the files first come up.
 struct ReviewCard: Equatable {
   var heading: String
@@ -184,6 +212,9 @@ struct TurnFooter: Equatable {
 
 /// The model's `wrap_up` call, which the transcript draws as a card under its turn instead of a tool row.
 let wrapUpToolName = "mcp__theseus__wrap_up"
+
+/// The browser tool that opens a page for the user, which gets a card above the calls it ran with.
+let previewToolName = "mcp__Claude_Browser__preview_start"
 
 /// The desktop app's own turn tools, in sessions it ran: its `wrap_up` reads as a card like Theseus's, and its task list call has no row.
 /// An earlier turn's `wrap_up` leaves its question as a row.
@@ -695,6 +726,12 @@ struct TranscriptBuilder {
       let hasCall = run.contains { if case .tool = $0 { true } else { false } }
       // While the turn runs, its last calls fold under what it is doing, as the desktop app shows them.
       let live = context.isRunning && end == entries.count && hasCall ? context.activity : nil
+
+      for case .tool(let id, previewToolName, _, let call?) in run {
+        guard let page = PageCard(id: id, call: call) else { continue }
+
+        built.elements.append(TranscriptElement(id: "\(id)/page", kind: .page(page), spacing: 10))
+      }
 
       if hasCall, run.count > 1 || live != nil {
         if live != nil { liveStart = built.elements.count }

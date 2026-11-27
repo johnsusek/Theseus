@@ -11,6 +11,8 @@ final class TranscriptView: NSView {
   var onLink: (Any, NSRect) -> Bool = { _, _ in false }
   /// A next-step card's button, whose title is the reply.
   var onReply: (String) -> Void = { _ in }
+  /// A page card's Open button, with the page's address.
+  var onOpenPage: (String) -> Void = { _ in }
 
   /// Off while another process has the session open, which turns off the next-step card's buttons.
   var canReply = true {
@@ -267,6 +269,8 @@ final class TranscriptView: NSView {
     switch element.kind {
     case .tasks(let tasks):
       return ViewAttachment { TaskCardView(steps: tasks) }
+    case .page(let page):
+      return ViewAttachment { [unowned self] in PageCardView(page: page) { [unowned self] in onOpenPage(page.address) } }
     case .footer(let footer):
       guard let turn = element.turn else { return NSTextAttachment() }
 

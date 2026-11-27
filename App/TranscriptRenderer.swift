@@ -136,7 +136,7 @@ struct TranscriptRenderer {
       let content = NSMutableAttributedString(attributedString: TranscriptStyle.text(text))
       content.append(chevron(isOpen: isExpanded))
       return [line(content, toggle: element.id)]
-    case .tasks, .permission, .nextStep, .footer:
+    case .tasks, .permission, .nextStep, .footer, .page:
       return [line(NSAttributedString(attachment: card(element)))]
     }
   }

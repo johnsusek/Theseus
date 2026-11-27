@@ -58,6 +58,7 @@ extension TranscriptElement {
     case .shell(let command, let output): "shell(\(command.map { $0 + " | " } ?? "")\(output))"
     case .question(let questions): "question(\(questions.map { "\($0.question) = \($0.answer ?? "")" }.joined(separator: ", ")))"
     case .image(let image): "image(\(URL(filePath: image.path).lastPathComponent))"
+    case .page(let page): "page(\(page.title), \(page.place))"
     case .review(let card): "review(\(card.heading): \(card.findings.map { [$0.severity, $0.outcome, $0.title].compactMap { $0 }.joined(separator: " ") }.joined(separator: ", ")))"
     case .ask(let text, _): "ask(\(text))"
     case .detail: "detail"

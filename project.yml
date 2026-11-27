@@ -20,6 +20,9 @@ packages:
   Highlightr:
     url: https://github.com/raspu/Highlightr
     from: 2.2.0
+  Subprocess:
+    url: https://github.com/swiftlang/swift-subprocess.git
+    from: 1.0.2
 schemes:
   Theseus:
     build:
@@ -41,12 +44,20 @@ targets:
       - path: App
         excludes:
           - "*.plist"
+          - "**/*.js"
+      # The scripts the browser injects into pages, built from SafariPilot by scripts/update-page-scripts.sh.
+      - path: App/Browser/page-content.js
+        buildPhase: resources
+      - path: App/Browser/page-main.js
+        buildPhase: resources
     dependencies:
       - package: ClaudeEngine
         product: ClaudeEngine
       - package: ClaudeEngine
         product: ClaudeWorkspace
       - package: Highlightr
+      - package: Subprocess
+        product: Subprocess
     info:
       path: App/Info.plist
       properties:
@@ -55,6 +66,10 @@ targets:
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: © 2026 John Susek
         NSPrincipalClass: NSApplication
+        # The browser loads any site, and dev servers on this Mac and the local network over plain http.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsInWebContent: true
+          NSAllowsLocalNetworking: true
         CFBundleDocumentTypes:
           - CFBundleTypeName: Folder
             CFBundleTypeRole: Viewer
@@ -71,6 +86,8 @@ targets:
     platform: macOS
     sources:
       - path: Tests
+      - path: App/Browser/BrowserAddress.swift
+      - path: App/Browser/BrowserKeys.swift
       - path: App/FilePaths.swift
       - path: App/Log.swift
       - path: App/Markdown.swift

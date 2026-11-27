@@ -113,6 +113,9 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
       item("Show Verbose Transcript", #selector(ConversationController.toggleVerboseTranscript(_:))),
       item("Show History", #selector(ConversationController.toggleHistory(_:)), "y"),
       .separator(),
+      item("Show Browser", #selector(Browser.toggleBrowser(_:)), "b", [.command, .option]),
+      item("Detach Browser", #selector(Browser.toggleBrowserDetached(_:))),
+      .separator(),
       item("Show Archived Sessions", #selector(ProjectsWindowController.toggleArchivedSessions(_:))),
       menu("Filter", [item("All Sessions", #selector(ProjectsWindowController.filterSessions(_:)), tag: -1), .separator()]
         + RowStatus.allCases.map { item($0.title, #selector(ProjectsWindowController.filterSessions(_:)), tag: $0.rawValue) }
@@ -123,6 +126,15 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
       item("Show All Tabs", #selector(NSWindow.toggleTabOverview(_:)), "\\", [.command, .shift]),
       .separator(),
       item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])
+    ]),
+    menu("Browser", [
+      item("Open Location…", #selector(Browser.openBrowserLocation(_:)), "l"),
+      item("New Tab", #selector(Browser.newBrowserTab(_:)), "t", [.command, .option]),
+      item("Close Tab", #selector(Browser.closeBrowserTab(_:)), "w", [.command, .option]),
+      .separator(),
+      item("Back", #selector(Browser.browserBack(_:)), "["),
+      item("Forward", #selector(Browser.browserForward(_:)), "]"),
+      item("Reload Page", #selector(Browser.reloadBrowserPage(_:)), "r")
     ]),
     submenu(session),
     submenu(window),

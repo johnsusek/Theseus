@@ -12,20 +12,15 @@ enum HostTools {
     - When you mention a file, write it as a markdown link whose target is the path relative to the working directory, with an optional :line suffix, for example [Markdown.swift](App/Markdown.swift:42). The user can click it to open the file.
     - Theseus has a preview window that renders files. When the user asks to see, show, open, view or read a file, call show_file with its path and do not paste the file's contents into your reply; a one-line pointer to the file is enough. Do the same for a file you wrote for the user to read, such as a report or a plan.
     - End every turn in which you changed files, ran commands or did multi-step work with a call to wrap_up, made as soon as the work is done and before you write any summary. Theseus draws its recap as a card under the turn, with the question and reply buttons when the user has a decision to make, so the recap is the turn's summary. Text written just before the call shows right above the card and repeats it, so write none. After the call, write a closing message only for what the recap leaves out, such as details or findings the user needs; if the recap says it all, end the turn without one. Skip wrap_up for short answers and conversation.
+    - Theseus has a browser of its own, which the Claude_Browser tools drive. When the user asks to see, open or preview a web page, a local HTML file or the project's dev server, open it there with preview_start, not in their own browser and not with show_file.
     - Call notify only when a task that ran for several minutes finishes or when you are blocked on the user's answer, since they may have switched to another app.
     """
 
   static let serverName = "theseus"
 
   static func servers(for session: Session, app: AppDelegate) -> [HostServer] {
-    /// A tool whose body runs on the main actor with the session. The session can close while the CLI still holds the tool.
-    func tool(_ name: String, _ description: String, _ properties: [String: JSONValue] = [:], optional: Set<String> = [], asksPermission: Bool = false, _ body: @escaping @MainActor @Sendable (HostToolCall, Session) async throws -> String) -> HostTool {
-      let schema: JSONValue = ["type": "object", "properties": .object(properties), "required": .array(properties.keys.filter { !optional.contains($0) }.sorted().map(JSONValue.string))]
-
-      return HostTool(name: name, description: description, inputSchema: schema, asksPermission: asksPermission) { [weak session] call in
-        guard let session else { throw ToolFailure("The session has closed.") }
-        return try await body(call, session)
-      }
+    func tool(_ name: String, _ description: String, _ properties: [String: JSONValue] = [:], optional: Set<String> = [], asksPermission: Bool = false, _ body: @escaping @MainActor @Sendable (HostToolCall, Session) async throws -> HostToolResult) -> HostTool {
+      hostTool(name, description, properties, optional: optional, asksPermission: asksPermission, for: session, body)
     }
 
     func existingFile(_ call: HostToolCall, _ session: Session) throws -> URL {
@@ -119,7 +114,18 @@ enum HostTools {
       }
     ]
 
-    return [HostServer(name: serverName, tools: tools)]
+    return [HostServer(name: serverName, tools: tools), BrowserTools.server(for: session, app: app)]
+  }
+}
+
+/// A tool whose body runs on the main actor with its session. The session can close while the CLI still holds the tool.
+@MainActor
+func hostTool(_ name: String, _ description: String, _ properties: [String: JSONValue] = [:], optional: Set<String> = [], asksPermission: Bool = false, for session: Session, _ body: @escaping @MainActor @Sendable (HostToolCall, Session) async throws -> HostToolResult) -> HostTool {
+  let schema: JSONValue = ["type": "object", "properties": .object(properties), "required": .array(properties.keys.filter { !optional.contains($0) }.sorted().map(JSONValue.string))]
+
+  return HostTool(name: name, description: description, inputSchema: schema, asksPermission: asksPermission) { [weak session] call in
+    guard let session else { throw ToolFailure("The session has closed.") }
+    return try await body(call, session)
   }
 }
 
