@@ -1,30 +1,28 @@
 import AppKit
 import Quartz
+import WebKit
 
 /// The preview's view, the same in the conversation's pane and in its own window: a bar with the file's name, and the file.
-/// Markdown is drawn the way the transcript draws it; anything else goes through Quick Look. It follows the file as it changes on disk.
-final class PreviewViewController: NSViewController, NSTextViewDelegate {
+/// Markdown is drawn the way GitHub draws it; anything else goes through Quick Look. It follows the file as it changes on disk.
+final class PreviewViewController: NSViewController, WKNavigationDelegate, NSSearchFieldDelegate, NSMenuItemValidation {
   private(set) var url: URL?
-  private let layoutDelegate = TranscriptLayoutDelegate()
-  private let textView = NSTextView(usingTextLayoutManager: true)
-  private let textScroll = NSScrollView()
+  private let pages = MarkdownSchemeHandler()
+  private lazy var webView = markdownView()
   private lazy var quickLook = QLPreviewView(frame: .zero, style: .normal)!
   private let name = NSTextField(labelWithString: "")
+  private let search = NSSearchField()
   private let placement = barButton("macwindow.on.rectangle", "Detach Preview", #selector(Preview.togglePreviewDetached(_:)))
-  private let body = ResizeEndingView()
+  private let body = NSView()
   private var watch: DispatchSourceFileSystemObject?
   private var reloading: Task<Void, Never>?
-  private var renderedWidth = 0.0
-  private var observations: [NSObjectProtocol] = []
 
   private static let markdownExtensions: Set = ["md", "markdown", "mdown", "mkd"]
 
   private var isMarkdown: Bool { url.map { Self.markdownExtensions.contains($0.pathExtension.lowercased()) } ?? false }
-  private var textWidth: Double { max(textScroll.contentSize.width - textView.textContainerInset.width * 2, 100) }
 
   override func loadView() {
     let close = barButton("xmark", "Hide Preview", #selector(Preview.hidePreview(_:)))
-    let bar = NSStackView(views: [name, placement, close])
+    let bar = NSStackView(views: [name, search, placement, close])
     let rule = NSBox()
     let column = NSStackView(views: [bar, rule, body])
 
@@ -32,6 +30,14 @@ final class PreviewViewController: NSViewController, NSTextViewDelegate {
     name.lineBreakMode = .byTruncatingMiddle
     name.setContentHuggingPriority(.defaultLow, for: .horizontal)
     name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    search.controlSize = .small
+    search.placeholderString = "Find"
+    search.sendsWholeSearchString = true
+    search.isHidden = true
+    search.delegate = self
+    search.target = self
+    search.action = #selector(findNext(_:))
+    search.widthAnchor.constraint(equalToConstant: 160).isActive = true
     bar.orientation = .horizontal
     bar.spacing = 8
     bar.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 10)
@@ -39,27 +45,6 @@ final class PreviewViewController: NSViewController, NSTextViewDelegate {
     column.orientation = .vertical
     column.spacing = 0
     column.translatesAutoresizingMaskIntoConstraints = false
-
-    textView.isEditable = false
-    textView.isSelectable = true
-    textView.drawsBackground = false
-    textView.usesFindBar = true
-    textView.isIncrementalSearchingEnabled = true
-    textView.isVerticallyResizable = true
-    textView.isHorizontallyResizable = false
-    textView.autoresizingMask = [.width]
-    textView.textContainerInset = NSSize(width: 24, height: 20)
-    textView.textContainer?.widthTracksTextView = true
-    textView.textContainer?.lineFragmentPadding = 0
-    textView.textLayoutManager?.delegate = layoutDelegate
-    textView.setAccessibilityLabel("Preview")
-    textView.delegate = self
-
-    textScroll.documentView = textView
-    textScroll.hasVerticalScroller = true
-    textScroll.drawsBackground = true
-    textScroll.backgroundColor = .textBackgroundColor
-    body.onResizeEnd = { [weak self] in self?.rerenderIfWidthChanged() }
 
     view = NSView()
     view.addSubview(column)
@@ -74,6 +59,20 @@ final class PreviewViewController: NSViewController, NSTextViewDelegate {
     ] + [bar, rule, body].map { $0.widthAnchor.constraint(equalTo: column.widthAnchor) })
   }
 
+  /// The page's own scripts are off; GitHub's additions run in the app's script world.
+  private func markdownView() -> WKWebView {
+    let configuration = WKWebViewConfiguration()
+
+    configuration.setURLSchemeHandler(pages, forURLScheme: MarkdownPage.scheme)
+    configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+    MarkdownPage.scripts.forEach(configuration.userContentController.addUserScript)
+
+    let webView = WKWebView(frame: .zero, configuration: configuration)
+    webView.navigationDelegate = self
+    webView.setAccessibilityLabel("Preview")
+    return webView
+  }
+
   /// Shows `url`, and follows it on disk.
   func show(_ url: URL) {
     loadViewIfNeeded()
@@ -81,7 +80,7 @@ final class PreviewViewController: NSViewController, NSTextViewDelegate {
     name.stringValue = url.lastPathComponent
     name.toolTip = url.path
 
-    let content = isMarkdown ? textScroll : quickLook
+    let content = isMarkdown ? webView : quickLook
 
     if content.superview !== body {
       body.subviews.forEach { $0.removeFromSuperview() }
@@ -90,7 +89,14 @@ final class PreviewViewController: NSViewController, NSTextViewDelegate {
       body.addSubview(content)
     }
 
-    reload()
+    if isMarkdown {
+      pages.document = url
+      webView.load(URLRequest(url: MarkdownPage.address(of: url)))
+    } else {
+      endFind()
+      quickLook.previewItem = url as NSURL
+    }
+
     watchFile()
   }
 
@@ -111,44 +117,6 @@ final class PreviewViewController: NSViewController, NSTextViewDelegate {
     reloading?.cancel()
   }
 
-  override func viewDidLayout() {
-    super.viewDidLayout()
-    if !body.inLiveResize { rerenderIfWidthChanged() }
-  }
-
-  /// Code blocks draw gray in an inactive window, so the view follows its window's main state.
-  override func viewDidAppear() {
-    super.viewDidAppear()
-    observations.forEach(NotificationCenter.default.removeObserver)
-    guard let window = view.window else { return }
-
-    observations = [NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification].map { name in
-      NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.setActive(window.isMainWindow) } }
-    }
-
-    setActive(window.isMainWindow)
-  }
-
-  private func rerenderIfWidthChanged() {
-    guard isMarkdown, textScroll.superview != nil, abs(textWidth - renderedWidth) > 1 else { return }
-
-    reload()
-  }
-
-  private func reload() {
-    guard let url else { return }
-
-    guard isMarkdown else { return quickLook.previewItem = url as NSURL }
-
-    do {
-      let source = try String(contentsOf: url, encoding: .utf8)
-      renderedWidth = textWidth
-      textView.textStorage?.setAttributedString(Markdown.paragraphs(source, style: MarkdownStyle(width: renderedWidth)).joined(terminated: false))
-    } catch {
-      textView.textStorage?.setAttributedString(NSAttributedString(string: "Could not read \(url.path): \(error.localizedDescription)", attributes: [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.systemRed]))
-    }
-  }
-
   /// Watches the file's descriptor. A save that replaces the file, as many editors do, ends the watch, so every event starts a new one.
   private func watchFile() {
     watch?.cancel()
@@ -165,55 +133,96 @@ final class PreviewViewController: NSViewController, NSTextViewDelegate {
     watch = source
   }
 
-  /// Waits for a burst of writes to settle before reading the file again.
+  /// Waits for a burst of writes to settle before reading the file again. Markdown swaps the article in place, so the scroll position stays.
   private func fileChanged() {
     reloading?.cancel()
     reloading = Task { [weak self] in
       try? await Task.sleep(for: .milliseconds(150))
-      guard let self, !Task.isCancelled else { return }
+      guard let self, !Task.isCancelled, let url else { return }
 
-      if isMarkdown {
-        reload()
-      } else {
+      if !isMarkdown {
         quickLook.refreshPreviewItem()
+      } else if webView.isLoading {
+        webView.reload()
+      } else {
+        let body = (try? String(contentsOf: url, encoding: .utf8)).map(MarkdownPage.body) ?? "Could not read \(url.path)"
+        _ = try? await webView.callAsyncJavaScript("update(html)", arguments: ["html": body], contentWorld: .defaultClient)
       }
 
       watchFile()
     }
   }
 
-  /// A path link opens its file in the file's default app, resolved against the previewed file's folder.
-  func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-    guard let url, let target = FilePaths.target(ofLink: link, in: url.deletingLastPathComponent()) else { return false }
-    guard FileManager.default.fileExists(atPath: target.path) else {
+  /// In-page anchors scroll; a path link opens its file in the file's default app, resolved against the previewed file's folder; a web link opens in the browser.
+  func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
+    guard let link = action.request.url else { return .cancel }
+    guard action.navigationType == .linkActivated else { return link.scheme == MarkdownPage.scheme ? .allow : .cancel }
+
+    let string = link.scheme == MarkdownPage.scheme ? link.path(percentEncoded: false) : link.absoluteString
+    guard let url, let target = FilePaths.target(ofLink: string, in: url.deletingLastPathComponent()) else {
+      NSWorkspace.shared.open(link)
+      return .cancel
+    }
+
+    if target == url.standardizedFileURL { return .allow }
+
+    if FileManager.default.fileExists(atPath: target.path) {
+      NSWorkspace.shared.open(target)
+    } else {
       NSSound.beep()
-      return true
     }
 
-    NSWorkspace.shared.open(target)
+    return .cancel
+  }
+
+  /// WKWebView has no find bar of its own, so the menu's find items drive a field in the preview's bar.
+  override func performTextFinderAction(_ sender: Any?) {
+    guard isMarkdown, let action = (sender as? NSMenuItem).flatMap({ NSTextFinder.Action(rawValue: $0.tag) }) else { return }
+
+    switch action {
+    case .showFindInterface:
+      search.isHidden = false
+      view.window?.makeFirstResponder(search)
+    case .nextMatch: find(backwards: false)
+    case .previousMatch: find(backwards: true)
+    case .hideFindInterface: endFind()
+    default: break
+    }
+  }
+
+  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    guard menuItem.action == #selector(performTextFinderAction(_:)) else { return true }
+    guard isMarkdown, let action = NSTextFinder.Action(rawValue: menuItem.tag) else { return false }
+
+    return [.showFindInterface, .nextMatch, .previousMatch, .hideFindInterface].contains(action)
+  }
+
+  @objc private func findNext(_ sender: Any?) { find(backwards: false) }
+
+  private func find(backwards: Bool) {
+    guard !search.stringValue.isEmpty else { return }
+
+    let configuration = WKFindConfiguration()
+    configuration.backwards = backwards
+
+    webView.find(search.stringValue, configuration: configuration) { result in
+      if !result.matchFound { NSSound.beep() }
+    }
+  }
+
+  private func endFind() {
+    guard !search.isHidden else { return }
+
+    search.isHidden = true
+    view.window?.makeFirstResponder(webView)
+  }
+
+  /// Escape in the find field hides it.
+  func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+    guard selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+
+    endFind()
     return true
-  }
-
-  /// Each layout fragment draws in its own subview, so all of them redraw.
-  private func setActive(_ isActive: Bool) {
-    layoutDelegate.state.isActive = isActive
-
-    func redraw(_ view: NSView) {
-      view.needsDisplay = true
-      view.subviews.forEach(redraw)
-    }
-
-    redraw(textView)
-  }
-}
-
-/// Reports the end of a live resize, a window's or a split divider's, so markdown lays out again once at the new width.
-private final class ResizeEndingView: NSView {
-  var onResizeEnd: () -> Void = {}
-
-  override func viewDidEndLiveResize() {
-    super.viewDidEndLiveResize()
-    onResizeEnd()
   }
 }
 
