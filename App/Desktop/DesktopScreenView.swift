@@ -6,12 +6,15 @@ import AVFoundation
 final class DesktopScreenView: NSView {
   let displayLayer = AVSampleBufferDisplayLayer()
 
+  // A sublayer, not the view's own layer: AppKit pins its own layer's anchor to a corner, and picture in picture lays the layer out
+  // around its center, so as the view's layer the frame showed offset and cropped in the PiP window.
   override init(frame: NSRect) {
     super.init(frame: frame)
-    displayLayer.videoGravity = .resizeAspect
-    displayLayer.backgroundColor = NSColor.black.cgColor
-    layer = displayLayer
     wantsLayer = true
+    layer?.backgroundColor = NSColor.black.cgColor
+    displayLayer.videoGravity = .resizeAspect
+    displayLayer.frame = bounds
+    layer?.addSublayer(displayLayer)
     setAccessibilityElement(true)
     setAccessibilityRole(.image)
     setAccessibilityLabel("Private Desktop screen")
@@ -19,6 +22,16 @@ final class DesktopScreenView: NSView {
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("DesktopScreenView is built in code") }
+
+  override func layout() {
+    super.layout()
+    guard displayLayer.superlayer === layer else { return }
+
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    displayLayer.frame = bounds
+    CATransaction.commit()
+  }
 
   /// Shows a JPEG frame from the agent's stream.
   func show(_ frame: Data) {
