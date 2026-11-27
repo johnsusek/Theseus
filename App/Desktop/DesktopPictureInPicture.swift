@@ -15,6 +15,9 @@ final class DesktopPictureInPicture: NSObject, AVPictureInPictureControllerDeleg
   private var starting: Task<Void, Never>?
   private var panelResizes: (any NSObjectProtocol)?
   private(set) var isActive = false
+  /// The layer has shown a frame since `start`. Picture in picture sizes itself from the frame's dimensions, and with none yet it
+  /// lays out with NaN and AppKit traps.
+  private var hasFrame = false
   /// Wants frames: starting or running.
   private(set) var isLive = false
   /// Brings the Private Desktop back on screen when picture in picture ends with its restore button.
@@ -41,14 +44,15 @@ final class DesktopPictureInPicture: NSObject, AVPictureInPictureControllerDeleg
   }
 
   func show(_ frame: Data) {
-    if isLive { screen.show(frame) }
+    if isLive, screen.show(frame) { hasFrame = true }
   }
 
-  /// Starts with the source window over `rect`, the pane's screen in screen coordinates, once it has shown a frame.
+  /// Starts with the source window over `rect`, the pane's screen in screen coordinates, once its layer has shown a frame.
   func start(over rect: NSRect) {
     guard let controller, !isLive else { return }
 
     isLive = true
+    hasFrame = false
     onChange?()
     source.setFrame(rect, display: false)
     source.alphaValue = 1
@@ -58,7 +62,7 @@ final class DesktopPictureInPicture: NSObject, AVPictureInPictureControllerDeleg
       for _ in 0..<40 {
         guard let self, isLive else { return }
 
-        if controller.isPictureInPicturePossible { return controller.startPictureInPicture() }
+        if hasFrame, controller.isPictureInPicturePossible { return controller.startPictureInPicture() }
 
         try? await Task.sleep(for: .milliseconds(50))
       }
@@ -79,7 +83,8 @@ final class DesktopPictureInPicture: NSObject, AVPictureInPictureControllerDeleg
     isLive = false
     isActive = false
     source.orderOut(nil)
-    screen.displayLayer.sampleBufferRenderer.flush(removingDisplayedImage: true)
+    // The last image stays: AVKit may lay out once more after it stops, and without an image its dimensions are zero.
+    screen.displayLayer.sampleBufferRenderer.flush()
     onChange?()
   }
 
@@ -88,7 +93,7 @@ final class DesktopPictureInPicture: NSObject, AVPictureInPictureControllerDeleg
 
   /// Sizes the hidden source window to the panel's content, and hides the overlay the panel may have rebuilt.
   private func fitToPanel() {
-    guard let content = panel?.contentView else { return }
+    guard let content = panel?.contentView, !content.bounds.isEmpty else { return }
 
     source.setContentSize(content.bounds.size)
 

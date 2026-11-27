@@ -33,13 +33,15 @@ final class DesktopScreenView: NSView {
     CATransaction.commit()
   }
 
-  /// Shows a JPEG frame from the agent's stream.
-  func show(_ frame: Data) {
-    guard let buffer = Self.sampleBuffer(frame) else { return }
+  /// Shows a JPEG frame from the agent's stream, and says whether it could.
+  @discardableResult
+  func show(_ frame: Data) -> Bool {
+    guard let buffer = Self.sampleBuffer(frame) else { return false }
 
     let renderer = displayLayer.sampleBufferRenderer
     if renderer.requiresFlushToResumeDecoding { renderer.flush() }
     renderer.enqueue(buffer)
+    return true
   }
 
   /// A frame as a sample buffer the layer shows as soon as it arrives, since a live screen has no timeline.
