@@ -16,7 +16,7 @@ final class DesktopPane: NSObject, NSWindowDelegate, NSMenuItemValidation {
   init(desktop: PrivateDesktop) {
     viewController = DesktopViewController(desktop: desktop)
     super.init()
-    viewController.onRestore = { [weak self] in self?.show(in: self?.frontConversation) }
+    viewController.picture.onRestore = { [weak self] in self?.show(in: self?.frontConversation) }
     keepCurrent(self) { pane in pane.window?.title = pane.viewController.heading }
   }
 
