@@ -164,6 +164,7 @@ func makeMainMenu(recentProjects: any NSMenuDelegate, sessionMenus: any NSMenuDe
     item("Zoom", #selector(NSWindow.performZoom(_:))),
     .separator(),
     item("Projects", #selector(AppDelegate.showProjects(_:)), "0", [.command, .shift]),
+    item("Private Desktop", #selector(AppDelegate.showPrivateDesktop(_:))),
     .separator(),
     item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)))
   ]

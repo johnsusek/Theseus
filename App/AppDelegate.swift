@@ -6,6 +6,8 @@ import UserNotifications
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   let workspace: Workspace
   let previewServers = PreviewServers()
+  let privateDesktop = PrivateDesktop(accounts: DesktopTools.readAccounts)
+  private lazy var desktopWindow = DesktopWindowController(desktop: privateDesktop)
   private var conversations: [ConversationController] = []
   private let sessionMenus = SessionMenuDelegate()
   private var projectPanel: NSOpenPanel?
@@ -16,9 +18,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   init(workspace: Workspace = Workspace(recordsDirectory: URL.applicationSupportDirectory.appending(path: "Theseus"))) {
     self.workspace = workspace
     super.init()
-    workspace.appendSystemPrompt = HostTools.prompt
     Markdown.codeButtons = CodeButtonsView.attachment
     workspace.hostServers = { [unowned self] session in HostTools.servers(for: session, app: self) }
+
+    // Sessions launched while the Private Desktop is on are told about it.
+    keepCurrent(self) { app in
+      let desktop = app.privateDesktop.isOn ? "\n" + DesktopTools.prompt(user: app.privateDesktop.user) : ""
+      app.workspace.appendSystemPrompt = HostTools.prompt + desktop
+    }
   }
 
   func applicationWillFinishLaunching(_ notification: Notification) {
@@ -28,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   /// Opening the Projects window scans the transcripts itself.
   func applicationDidFinishLaunching(_ notification: Notification) {
     UNUserNotificationCenter.current().delegate = self
+    privateDesktop.start()
 
     // Follows the sessions a terminal or another app has open, and which ones the desktop app has shown.
     Task {
@@ -190,6 +198,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   func closed(_ controller: ConversationController) {
     conversations.removeAll { $0 === controller }
+    if let session = controller.session { privateDesktop.release(session) }
+  }
+
+  /// Window > Private Desktop.
+  @objc func showPrivateDesktop(_ sender: Any?) {
+    desktopWindow.showWindow(sender)
   }
 
   /// File > New Conversation with no project window in front: the last project, or the Open Project panel.

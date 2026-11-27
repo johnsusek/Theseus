@@ -85,6 +85,8 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     content.prompt.agents.action = #selector(showAgents(_:))
     content.prompt.changes.target = self
     content.prompt.changes.action = #selector(showChanges(_:))
+    content.prompt.desktop.target = app
+    content.prompt.desktop.action = #selector(AppDelegate.showPrivateDesktop(_:))
     content.prompt.settingsItems = { [unowned self] in settingsMenuItems() }
     content.picks.menuItems = { [unowned self] button in
       if button === content.picks.model { return menuItems(.model) + [.separator(), pickItem("Fast Mode", #selector(toggleFastMode(_:)), nil)] }
@@ -312,6 +314,7 @@ final class ConversationController: NSWindowController, NSWindowDelegate, NSMenu
     chips.changedFiles = transcript.changedFiles.count
     chips.added = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.added }
     chips.removed = transcript.changedFiles.reduce(0) { $0 + $1.lineDelta.removed }
+    chips.drivesDesktop = app.privateDesktop.holder === session
 
     agentList?.rows = agentRows(transcript)
     changeList?.rows = changeRows(transcript.changedFiles, base: session.workingDirectory)

@@ -92,11 +92,32 @@ private let browserPhrases: [String: ToolPhrase] = [
   "computer/wait": ToolPhrase("Waited", "Waiting", "Could not wait", "waited", "waited")
 ]
 
+/// The Private Desktop's tools on Theseus's own server, by the name after `desktop_`.
+private let desktop = "mcp__theseus__desktop_"
+
+private let desktopPhrases: [String: ToolPhrase] = [
+  "screenshot": ToolPhrase("Captured Private Desktop", "Capturing Private Desktop", "Could not capture Private Desktop", "captured Private Desktop", "captured Private Desktop"),
+  "click": clickPhrase,
+  "move": ToolPhrase("Moved pointer", "Moving pointer", "Could not move pointer", "moved pointer", "moved pointer"),
+  "glide": ToolPhrase("Moved pointer", "Moving pointer", "Could not move pointer", "moved pointer", "moved pointer"),
+  "drag": ToolPhrase("Dragged", "Dragging", "Could not drag", "dragged", "dragged"),
+  "scroll": ToolPhrase("Scrolled", "Scrolling", "Could not scroll", "scrolled", "scrolled"),
+  "key": ToolPhrase("Pressed key", "Pressing key", "Could not press key", "pressed key", "pressed keys"),
+  "type": ToolPhrase("Typed", "Typing", "Could not type", "typed", "typed"),
+  "windows": ToolPhrase("Listed windows", "Listing windows", "Could not list windows", "listed windows", "listed windows"),
+  "place": ToolPhrase("Placed window", "Placing window", "Could not place window", "placed window", "placed %d windows"),
+  "activate": ToolPhrase("Switched app", "Switching app", "Could not switch app", "switched app", "switched app"),
+  "open": ToolPhrase("Opened on Private Desktop", "Opening on Private Desktop", "Could not open on Private Desktop", "opened on Private Desktop", "opened %d items on Private Desktop"),
+  "install": ToolPhrase("Installed app", "Installing app", "Could not install app", "installed app", "installed %d apps"),
+  "run": ToolPhrase("Ran on Private Desktop", "Running on Private Desktop", "Could not run on Private Desktop", "ran a command on Private Desktop", "ran %d commands on Private Desktop")
+]
+
 private let fileTools: Set<String> = ["Read", "Write", "Edit", "MultiEdit", "NotebookEdit"]
 
 /// A tool without a phrase of its own reads "Used <name>".
 func toolPhrase(for name: String) -> ToolPhrase {
   if let phrase = toolPhrases[name] ?? (name.hasPrefix(browser) ? browserPhrases[String(name.dropFirst(browser.count))] : nil) { return phrase }
+  if name.hasPrefix(desktop), let phrase = desktopPhrases[String(name.dropFirst(desktop.count))] { return phrase }
 
   let display = toolDisplayName(name)
   return ToolPhrase("Used \(display)", "Using \(display)", "Could not use \(display)", "used \(display)", "used \(display) %d times")

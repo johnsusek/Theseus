@@ -23,6 +23,9 @@ packages:
   Subprocess:
     url: https://github.com/swiftlang/swift-subprocess.git
     from: 1.0.2
+  stagehand:
+    url: https://github.com/johnsusek/stagehand
+    branch: main
 schemes:
   Theseus:
     build:
@@ -58,6 +61,8 @@ targets:
       - package: Highlightr
       - package: Subprocess
         product: Subprocess
+      - package: stagehand
+        product: StagehandShared
     info:
       path: App/Info.plist
       properties:
@@ -92,6 +97,8 @@ targets:
       - path: App/Log.swift
       - path: App/Markdown.swift
       - path: App/CodeHighlighter.swift
+      - path: App/Desktop/DesktopChecks.swift
+      - path: App/Desktop/PrivateDesktop.swift
       - path: App/PermissionPrompt.swift
       - path: App/ProjectsModel.swift
       - path: App/SidebarModel.swift
@@ -107,6 +114,8 @@ targets:
       - package: ClaudeEngine
         product: ClaudeWorkspace
       - package: Highlightr
+      - package: stagehand
+        product: StagehandShared
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

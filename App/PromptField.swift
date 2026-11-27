@@ -6,6 +6,7 @@ final class PromptField: NSView, NSTextViewDelegate {
   let textView = PromptTextView(usingTextLayoutManager: true)
   let agents = StatusChip()
   let changes = StatusChip()
+  let desktop = StatusChip()
   /// Once the conversation has started: its permission mode, with the model, effort and mode to pick from in its menu.
   let settings = NSPopUpButton(frame: .zero, pullsDown: true)
   /// The settings menu's items, asked for when it is about to open.
@@ -113,6 +114,8 @@ final class PromptField: NSView, NSTextViewDelegate {
 
     agents.setAccessibilityLabel("Agents")
     changes.setAccessibilityLabel("Changes")
+    desktop.setAccessibilityLabel("Private Desktop")
+    desktop.toolTip = "Driving the Private Desktop"
 
     settings.isBordered = false
     settings.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -125,7 +128,7 @@ final class PromptField: NSView, NSTextViewDelegate {
     NotificationCenter.default.addObserver(self, selector: #selector(fillSettings), name: NSPopUpButton.willPopUpNotification, object: settings)
 
     // A stack lets the text take the room of whatever is hidden.
-    let trailing = NSStackView(views: [settings, agents, changes, meter, button])
+    let trailing = NSStackView(views: [settings, agents, changes, desktop, meter, button])
     trailing.spacing = 10
     trailing.alignment = .centerY
 
@@ -207,6 +210,12 @@ final class PromptField: NSView, NSTextViewDelegate {
     changes.text = lineDeltaText(added: chips.added, removed: chips.removed, font: Self.digits, isActive: isActive)
     changes.toolTip = chips.changesTooltip
     changes.setAccessibilityValue("\(chips.changesTooltip), \(chips.added) lines added, \(chips.removed) removed")
+
+    desktop.isHidden = !chips.drivesDesktop
+    let tint: NSColor = isActive ? .controlAccentColor : .secondaryLabelColor
+    let symbol = NSTextAttachment()
+    symbol.image = NSImage(systemSymbolName: "display", accessibilityDescription: nil)?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: NSFont.systemFontSize, weight: .medium).applying(.init(paletteColors: [tint])))
+    desktop.text = NSAttributedString(attachment: symbol)
   }
 
   private func updateButton() {

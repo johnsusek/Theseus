@@ -9,6 +9,8 @@ struct ChipCounts: Equatable {
   var changedFiles = 0
   var added = 0
   var removed = 0
+  /// This conversation's turn holds the Private Desktop.
+  var drivesDesktop = false
 
   var agentsTooltip: String { runningAgents == 1 ? "1 Agent Running" : "\(runningAgents) Agents Running" }
   var changesTooltip: String { changedFiles == 1 ? "1 Changed File" : "\(changedFiles) Changed Files" }

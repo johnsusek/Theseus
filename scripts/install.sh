@@ -11,12 +11,13 @@ cd "$root"
 rm -rf "$app"
 xcodegen generate --quiet
 mkdir -p "$derived" build/Dev.xcworkspace
-# A local package in the workspace takes the place of the GitHub one, so engine edits build without a push.
+# Local packages in the workspace take the place of the GitHub ones, so engine and stagehand edits build without a push.
 cat >build/Dev.xcworkspace/contents.xcworkspacedata <<'XML'
 <?xml version="1.0" encoding="UTF-8"?>
 <Workspace version="1.0">
   <FileRef location="group:../Theseus.xcodeproj"></FileRef>
   <FileRef location="group:../../ClaudeEngine"></FileRef>
+  <FileRef location="group:../../../stagehand"></FileRef>
 </Workspace>
 XML
 # A failed build can leave a partial bundle behind, so gate on xcodebuild's status rather than the bundle existing.

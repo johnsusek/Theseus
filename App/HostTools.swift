@@ -114,7 +114,7 @@ enum HostTools {
       }
     ]
 
-    return [HostServer(name: serverName, tools: tools), BrowserTools.server(for: session, app: app)]
+    return [HostServer(name: serverName, tools: tools + DesktopTools.tools(for: session, app: app)), BrowserTools.server(for: session, app: app)]
   }
 }
 
