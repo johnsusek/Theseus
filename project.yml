@@ -16,7 +16,7 @@ settings:
 packages:
   ClaudeEngine:
     url: https://github.com/johnsusek/ClaudeEngine
-    exactVersion: 0.1.0
+    exactVersion: 0.2.0
   Highlightr:
     url: https://github.com/raspu/Highlightr
     from: 2.2.0
